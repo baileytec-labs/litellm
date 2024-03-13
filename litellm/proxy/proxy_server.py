@@ -9,7 +9,7 @@ import warnings
 import importlib
 import warnings
 import backoff
-
+programmed_title_message=os.environ.get("TITLEMESSAGE")
 
 def showwarning(message, category, filename, lineno, file=None, line=None):
     traceback_info = f"{filename}:{lineno}: {category.__name__}: {message}\n"
@@ -140,12 +140,12 @@ from typing import Union
 
 ui_link = f"/ui/"
 ui_message = (
-    f"👉 [```LiteLLM Admin Panel on /ui```]({ui_link}). Create, Edit Keys with SSO"
+    f"👉 [```Admin Panel```]({ui_link})."
 )
 app = FastAPI(
     docs_url="/",
-    title="LiteLLM API",
-    description=f"Proxy Server to call 100+ LLMs in the OpenAI format\n\n{ui_message}",
+    title=programmed_title_message or "LiteLLM API",
+    description=programmed_title_message or f"Proxy Server to call 100+ LLMs in the OpenAI format\n\n{ui_message}",
     version=version,
     root_path=os.environ.get(
         "SERVER_ROOT_PATH", ""
