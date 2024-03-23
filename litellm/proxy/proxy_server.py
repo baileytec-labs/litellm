@@ -10,6 +10,16 @@ import importlib
 import warnings
 import backoff
 programmed_title_message=os.environ.get("TITLEMESSAGE")
+enable_ui_panel = os.environ.get("UIPANEL")
+if enable_ui_panel is None:
+    enable_ui_panel = True
+else:
+    enable_ui_panel = False
+enable_extra_admin = os.environ.get("EXTRAADMIN")
+if enable_extra_admin is None:
+    enable_extra_admin = True
+else:
+    enable_extra_admin = False
 
 def showwarning(message, category, filename, lineno, file=None, line=None):
     traceback_info = f"{filename}:{lineno}: {category.__name__}: {message}\n"
@@ -203,7 +213,8 @@ origins = ["*"]
 try:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     ui_path = os.path.join(current_dir, "_experimental", "out")
-    app.mount("/ui", StaticFiles(directory=ui_path, html=True), name="ui")
+    if enable_ui_panel:
+        app.mount("/ui", StaticFiles(directory=ui_path, html=True), name="ui")
 except:
     pass
 app.add_middleware(
@@ -3365,2338 +3376,2338 @@ async def moderations(
                 code=getattr(e, "status_code", 500),
             )
 
+if enable_extra_admin:
+    #### KEY MANAGEMENT ####
 
-#### KEY MANAGEMENT ####
 
+    @router.post(
+        "/key/generate",
+        tags=["key management"],
+        dependencies=[Depends(user_api_key_auth)],
+        response_model=GenerateKeyResponse,
+    )
+    async def generate_key_fn(
+        data: GenerateKeyRequest,
+        Authorization: Optional[str] = Header(None),
+    ):
+        """
+        Generate an API key based on the provided data.
 
-@router.post(
-    "/key/generate",
-    tags=["key management"],
-    dependencies=[Depends(user_api_key_auth)],
-    response_model=GenerateKeyResponse,
-)
-async def generate_key_fn(
-    data: GenerateKeyRequest,
-    Authorization: Optional[str] = Header(None),
-):
-    """
-    Generate an API key based on the provided data.
+        Docs: https://docs.litellm.ai/docs/proxy/virtual_keys
 
-    Docs: https://docs.litellm.ai/docs/proxy/virtual_keys
+        Parameters:
+        - duration: Optional[str] - Specify the length of time the token is valid for. You can set duration as seconds ("30s"), minutes ("30m"), hours ("30h"), days ("30d").
+        - key_alias: Optional[str] - User defined key alias
+        - team_id: Optional[str] - The team id of the key
+        - user_id: Optional[str] - The user id of the key
+        - models: Optional[list] - Model_name's a user is allowed to call. (if empty, key is allowed to call all models)
+        - aliases: Optional[dict] - Any alias mappings, on top of anything in the config.yaml model list. - https://docs.litellm.ai/docs/proxy/virtual_keys#managing-auth---upgradedowngrade-models
+        - config: Optional[dict] - any key-specific configs, overrides config in config.yaml
+        - spend: Optional[int] - Amount spent by key. Default is 0. Will be updated by proxy whenever key is used. https://docs.litellm.ai/docs/proxy/virtual_keys#managing-auth---tracking-spend
+        - max_budget: Optional[float] - Specify max budget for a given key.
+        - max_parallel_requests: Optional[int] - Rate limit a user based on the number of parallel requests. Raises 429 error, if user's parallel requests > x.
+        - metadata: Optional[dict] - Metadata for key, store information for key. Example metadata = {"team": "core-infra", "app": "app2", "email": "ishaan@berri.ai" }
+        - permissions: Optional[dict] - key-specific permissions. Currently just used for turning off pii masking (if connected). Example - {"pii": false}
+        - model_max_budget: Optional[dict] - key-specific model budget in USD. Example - {"text-davinci-002": 0.5, "gpt-3.5-turbo": 0.5}. IF null or {} then no model specific budget.
 
-    Parameters:
-    - duration: Optional[str] - Specify the length of time the token is valid for. You can set duration as seconds ("30s"), minutes ("30m"), hours ("30h"), days ("30d").
-    - key_alias: Optional[str] - User defined key alias
-    - team_id: Optional[str] - The team id of the key
-    - user_id: Optional[str] - The user id of the key
-    - models: Optional[list] - Model_name's a user is allowed to call. (if empty, key is allowed to call all models)
-    - aliases: Optional[dict] - Any alias mappings, on top of anything in the config.yaml model list. - https://docs.litellm.ai/docs/proxy/virtual_keys#managing-auth---upgradedowngrade-models
-    - config: Optional[dict] - any key-specific configs, overrides config in config.yaml
-    - spend: Optional[int] - Amount spent by key. Default is 0. Will be updated by proxy whenever key is used. https://docs.litellm.ai/docs/proxy/virtual_keys#managing-auth---tracking-spend
-    - max_budget: Optional[float] - Specify max budget for a given key.
-    - max_parallel_requests: Optional[int] - Rate limit a user based on the number of parallel requests. Raises 429 error, if user's parallel requests > x.
-    - metadata: Optional[dict] - Metadata for key, store information for key. Example metadata = {"team": "core-infra", "app": "app2", "email": "ishaan@berri.ai" }
-    - permissions: Optional[dict] - key-specific permissions. Currently just used for turning off pii masking (if connected). Example - {"pii": false}
-    - model_max_budget: Optional[dict] - key-specific model budget in USD. Example - {"text-davinci-002": 0.5, "gpt-3.5-turbo": 0.5}. IF null or {} then no model specific budget.
+        Examples: 
 
-    Examples: 
+        1. Allow users to turn on/off pii masking
 
-    1. Allow users to turn on/off pii masking
+        ```bash
+        curl --location 'http://0.0.0.0:8000/key/generate' \
+            --header 'Authorization: Bearer sk-1234' \
+            --header 'Content-Type: application/json' \
+            --data '{
+                "permissions": {"allow_pii_controls": true}
+        }'
+        ```
 
-    ```bash
-    curl --location 'http://0.0.0.0:8000/key/generate' \
-        --header 'Authorization: Bearer sk-1234' \
-        --header 'Content-Type: application/json' \
-        --data '{
-            "permissions": {"allow_pii_controls": true}
-    }'
-    ```
+        Returns:
+        - key: (str) The generated api key
+        - expires: (datetime) Datetime object for when key expires.
+        - user_id: (str) Unique user id - used for tracking spend across multiple keys for same user id.
+        """
+        try:
+            global user_custom_key_generate
+            verbose_proxy_logger.debug("entered /key/generate")
 
-    Returns:
-    - key: (str) The generated api key
-    - expires: (datetime) Datetime object for when key expires.
-    - user_id: (str) Unique user id - used for tracking spend across multiple keys for same user id.
-    """
-    try:
-        global user_custom_key_generate
-        verbose_proxy_logger.debug("entered /key/generate")
-
-        if user_custom_key_generate is not None:
-            result = await user_custom_key_generate(data)
-            decision = result.get("decision", True)
-            message = result.get("message", "Authentication Failed - Custom Auth Rule")
-            if not decision:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN, detail=message
-                )
-        # check if user set default key/generate params on config.yaml
-        if litellm.default_key_generate_params is not None:
-            for elem in data:
-                key, value = elem
-                if value is None and key in [
-                    "max_budget",
-                    "user_id",
-                    "team_id",
-                    "max_parallel_requests",
-                    "tpm_limit",
-                    "rpm_limit",
-                    "budget_duration",
-                ]:
-                    setattr(
-                        data, key, litellm.default_key_generate_params.get(key, None)
+            if user_custom_key_generate is not None:
+                result = await user_custom_key_generate(data)
+                decision = result.get("decision", True)
+                message = result.get("message", "Authentication Failed - Custom Auth Rule")
+                if not decision:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN, detail=message
                     )
-                elif key == "models" and value == []:
-                    setattr(data, key, litellm.default_key_generate_params.get(key, []))
-                elif key == "metadata" and value == {}:
-                    setattr(data, key, litellm.default_key_generate_params.get(key, {}))
-
-        # check if user set default key/generate params on config.yaml
-        if litellm.upperbound_key_generate_params is not None:
-            for elem in data:
-                # if key in litellm.upperbound_key_generate_params, use the min of value and litellm.upperbound_key_generate_params[key]
-                key, value = elem
-                if value is not None and key in litellm.upperbound_key_generate_params:
-                    # if value is float/int
-                    if key in [
+            # check if user set default key/generate params on config.yaml
+            if litellm.default_key_generate_params is not None:
+                for elem in data:
+                    key, value = elem
+                    if value is None and key in [
                         "max_budget",
+                        "user_id",
+                        "team_id",
                         "max_parallel_requests",
                         "tpm_limit",
                         "rpm_limit",
+                        "budget_duration",
                     ]:
-                        if value > litellm.upperbound_key_generate_params[key]:
-                            # directly compare floats/ints
-                            setattr(
-                                data, key, litellm.upperbound_key_generate_params[key]
-                            )
-                    elif key == "budget_duration":
-                        # budgets are in 1s, 1m, 1h, 1d, 1m (30s, 30m, 30h, 30d, 30m)
-                        # compare the duration in seconds and max duration in seconds
-                        upperbound_budget_duration = _duration_in_seconds(
-                            duration=litellm.upperbound_key_generate_params[key]
+                        setattr(
+                            data, key, litellm.default_key_generate_params.get(key, None)
                         )
-                        user_set_budget_duration = _duration_in_seconds(duration=value)
-                        if user_set_budget_duration > upperbound_budget_duration:
-                            setattr(
-                                data, key, litellm.upperbound_key_generate_params[key]
+                    elif key == "models" and value == []:
+                        setattr(data, key, litellm.default_key_generate_params.get(key, []))
+                    elif key == "metadata" and value == {}:
+                        setattr(data, key, litellm.default_key_generate_params.get(key, {}))
+
+            # check if user set default key/generate params on config.yaml
+            if litellm.upperbound_key_generate_params is not None:
+                for elem in data:
+                    # if key in litellm.upperbound_key_generate_params, use the min of value and litellm.upperbound_key_generate_params[key]
+                    key, value = elem
+                    if value is not None and key in litellm.upperbound_key_generate_params:
+                        # if value is float/int
+                        if key in [
+                            "max_budget",
+                            "max_parallel_requests",
+                            "tpm_limit",
+                            "rpm_limit",
+                        ]:
+                            if value > litellm.upperbound_key_generate_params[key]:
+                                # directly compare floats/ints
+                                setattr(
+                                    data, key, litellm.upperbound_key_generate_params[key]
+                                )
+                        elif key == "budget_duration":
+                            # budgets are in 1s, 1m, 1h, 1d, 1m (30s, 30m, 30h, 30d, 30m)
+                            # compare the duration in seconds and max duration in seconds
+                            upperbound_budget_duration = _duration_in_seconds(
+                                duration=litellm.upperbound_key_generate_params[key]
                             )
+                            user_set_budget_duration = _duration_in_seconds(duration=value)
+                            if user_set_budget_duration > upperbound_budget_duration:
+                                setattr(
+                                    data, key, litellm.upperbound_key_generate_params[key]
+                                )
 
-        data_json = data.json()  # type: ignore
+            data_json = data.json()  # type: ignore
 
-        # if we get max_budget passed to /key/generate, then use it as key_max_budget. Since generate_key_helper_fn is used to make new users
-        if "max_budget" in data_json:
-            data_json["key_max_budget"] = data_json.pop("max_budget", None)
-        if "soft_budget" in data_json:
-            data_json["key_soft_budget"] = data_json.pop("soft_budget", None)
+            # if we get max_budget passed to /key/generate, then use it as key_max_budget. Since generate_key_helper_fn is used to make new users
+            if "max_budget" in data_json:
+                data_json["key_max_budget"] = data_json.pop("max_budget", None)
+            if "soft_budget" in data_json:
+                data_json["key_soft_budget"] = data_json.pop("soft_budget", None)
 
-        if "budget_duration" in data_json:
-            data_json["key_budget_duration"] = data_json.pop("budget_duration", None)
+            if "budget_duration" in data_json:
+                data_json["key_budget_duration"] = data_json.pop("budget_duration", None)
 
-        response = await generate_key_helper_fn(**data_json)
-        return GenerateKeyResponse(**response)
-    except Exception as e:
-        traceback.print_exc()
-        if isinstance(e, HTTPException):
+            response = await generate_key_helper_fn(**data_json)
+            return GenerateKeyResponse(**response)
+        except Exception as e:
+            traceback.print_exc()
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
             raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                message="Authentication Error, " + str(e),
                 type="auth_error",
                 param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
-            )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
-
-
-@router.post(
-    "/key/update", tags=["key management"], dependencies=[Depends(user_api_key_auth)]
-)
-async def update_key_fn(request: Request, data: UpdateKeyRequest):
-    """
-    Update an existing key
-    """
-    global prisma_client
-    try:
-        data_json: dict = data.json()
-        key = data_json.pop("key")
-        # get the row from db
-        if prisma_client is None:
-            raise Exception("Not connected to DB!")
-
-        # get non default values for key
-        non_default_values = {}
-        for k, v in data_json.items():
-            if v is not None and v not in (
-                [],
-                {},
-                0,
-            ):  # models default to [], spend defaults to 0, we should not reset these values
-                non_default_values[k] = v
-        response = await prisma_client.update_data(
-            token=key, data={**non_default_values, "token": key}
-        )
-        return {"key": key, **response["data"]}
-        # update based on remaining passed in values
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
-                type="auth_error",
-                param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
-            )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
-
-
-@router.post(
-    "/key/delete", tags=["key management"], dependencies=[Depends(user_api_key_auth)]
-)
-async def delete_key_fn(data: KeyRequest):
-    """
-    Delete a key from the key management system.
-
-    Parameters::
-    - keys (List[str]): A list of keys or hashed keys to delete. Example {"keys": ["sk-QWrxEynunsNpV1zT48HIrw", "837e17519f44683334df5291321d97b8bf1098cd490e49e215f6fea935aa28be"]}
-
-    Returns:
-    - deleted_keys (List[str]): A list of deleted keys. Example {"deleted_keys": ["sk-QWrxEynunsNpV1zT48HIrw", "837e17519f44683334df5291321d97b8bf1098cd490e49e215f6fea935aa28be"]}
-
-
-    Raises:
-        HTTPException: If an error occurs during key deletion.
-    """
-    try:
-        global user_api_key_cache
-        keys = data.keys
-        if len(keys) == 0:
-            raise ProxyException(
-                message=f"No keys provided, passed in: keys={keys}",
-                type="auth_error",
-                param="keys",
                 code=status.HTTP_400_BAD_REQUEST,
             )
 
-        result = await delete_verification_token(tokens=keys)
-        verbose_proxy_logger.debug("/key/delete - deleted_keys=", result)
 
-        number_deleted_keys = len(result["deleted_keys"])
-        assert len(keys) == number_deleted_keys
-
-        for key in keys:
-            user_api_key_cache.delete_cache(key)
-            # remove hash token from cache
-            hashed_token = hash_token(key)
-            user_api_key_cache.delete_cache(hashed_token)
-
-        verbose_proxy_logger.debug(
-            f"/keys/delete - cache after delete: {user_api_key_cache.in_memory_cache.cache_dict}"
-        )
-
-        return {"deleted_keys": keys}
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
-                type="auth_error",
-                param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
-            )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
-
-
-@router.post(
-    "/v2/key/info", tags=["key management"], dependencies=[Depends(user_api_key_auth)]
-)
-async def info_key_fn_v2(
-    data: Optional[KeyRequest] = None,
-    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
-):
-    """
-    Retrieve information about a list of keys.
-
-    **New endpoint**. Currently admin only.
-    Parameters:
-        keys: Optional[list] = body parameter representing the key(s) in the request
-        user_api_key_dict: UserAPIKeyAuth = Dependency representing the user's API key
-    Returns:
-        Dict containing the key and its associated information
-    
-    Example Curl:
-    ```
-    curl -X GET "http://0.0.0.0:8000/key/info" \
-    -H "Authorization: Bearer sk-1234" \
-    -d {"keys": ["sk-1", "sk-2", "sk-3"]}
-    ```
-    """
-    global prisma_client
-    try:
-        if prisma_client is None:
-            raise Exception(
-                f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
-            )
-        if data is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"message": "Malformed request. No keys passed in."},
-            )
-
-        key_info = await prisma_client.get_data(
-            token=data.keys, table_name="key", query_type="find_all"
-        )
-        filtered_key_info = []
-        for k in key_info:
-            try:
-                k = k.model_dump()  # noqa
-            except:
-                # if using pydantic v1
-                k = k.dict()
-            filtered_key_info.append(k)
-        return {"key": data.keys, "info": filtered_key_info}
-
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
-                type="auth_error",
-                param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
-            )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
-
-
-@router.get(
-    "/key/info", tags=["key management"], dependencies=[Depends(user_api_key_auth)]
-)
-async def info_key_fn(
-    key: Optional[str] = fastapi.Query(
-        default=None, description="Key in the request parameters"
-    ),
-    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
-):
-    """
-    Retrieve information about a key.
-    Parameters:
-        key: Optional[str] = Query parameter representing the key in the request
-        user_api_key_dict: UserAPIKeyAuth = Dependency representing the user's API key
-    Returns:
-        Dict containing the key and its associated information
-    
-    Example Curl:
-    ```
-    curl -X GET "http://0.0.0.0:8000/key/info?key=sk-02Wr4IAlN3NvPXvL5JVvDA" \
--H "Authorization: Bearer sk-1234"
-    ```
-
-    Example Curl - if no key is passed, it will use the Key Passed in Authorization Header
-    ```
-    curl -X GET "http://0.0.0.0:8000/key/info" \
--H "Authorization: Bearer sk-02Wr4IAlN3NvPXvL5JVvDA"
-    ```
-    """
-    global prisma_client
-    try:
-        if prisma_client is None:
-            raise Exception(
-                f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
-            )
-        if key == None:
-            key = user_api_key_dict.api_key
-        key_info = await prisma_client.get_data(token=key)
-        ## REMOVE HASHED TOKEN INFO BEFORE RETURNING ##
+    @router.post(
+        "/key/update", tags=["key management"], dependencies=[Depends(user_api_key_auth)]
+    )
+    async def update_key_fn(request: Request, data: UpdateKeyRequest):
+        """
+        Update an existing key
+        """
+        global prisma_client
         try:
-            key_info = key_info.model_dump()  # noqa
-        except:
-            # if using pydantic v1
-            key_info = key_info.dict()
-        key_info.pop("token")
-        return {"key": key, "info": key_info}
-    except Exception as e:
-        if isinstance(e, HTTPException):
+            data_json: dict = data.json()
+            key = data_json.pop("key")
+            # get the row from db
+            if prisma_client is None:
+                raise Exception("Not connected to DB!")
+
+            # get non default values for key
+            non_default_values = {}
+            for k, v in data_json.items():
+                if v is not None and v not in (
+                    [],
+                    {},
+                    0,
+                ):  # models default to [], spend defaults to 0, we should not reset these values
+                    non_default_values[k] = v
+            response = await prisma_client.update_data(
+                token=key, data={**non_default_values, "token": key}
+            )
+            return {"key": key, **response["data"]}
+            # update based on remaining passed in values
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
             raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                message="Authentication Error, " + str(e),
                 type="auth_error",
                 param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
-            )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
-
-
-#### SPEND MANAGEMENT #####
-
-
-@router.get(
-    "/spend/keys",
-    tags=["budget & spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def spend_key_fn():
-    """
-    View all keys created, ordered by spend
-
-    Example Request: 
-    ```
-    curl -X GET "http://0.0.0.0:8000/spend/keys" \
--H "Authorization: Bearer sk-1234"
-    ```
-    """
-    global prisma_client
-    try:
-        if prisma_client is None:
-            raise Exception(
-                f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
+                code=status.HTTP_400_BAD_REQUEST,
             )
 
-        key_info = await prisma_client.get_data(table_name="key", query_type="find_all")
-        return key_info
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": str(e)},
-        )
-
-
-@router.get(
-    "/spend/users",
-    tags=["budget & spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def spend_user_fn(
-    user_id: Optional[str] = fastapi.Query(
-        default=None,
-        description="Get User Table row for user_id",
-    ),
-):
-    """
-    View all users created, ordered by spend
-
-    Example Request: 
-    ```
-    curl -X GET "http://0.0.0.0:8000/spend/users" \
--H "Authorization: Bearer sk-1234"
-    ```
-
-    View User Table row for user_id
-    ```
-    curl -X GET "http://0.0.0.0:8000/spend/users?user_id=1234" \
--H "Authorization: Bearer sk-1234"
-    ```
-    """
-    global prisma_client
-    try:
-        if prisma_client is None:
-            raise Exception(
-                f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
-            )
-
-        if user_id is not None:
-            user_info = await prisma_client.get_data(
-                table_name="user", query_type="find_unique", user_id=user_id
-            )
-            return [user_info]
-        else:
-            user_info = await prisma_client.get_data(
-                table_name="user", query_type="find_all"
-            )
-
-        return user_info
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": str(e)},
-        )
-
-
-@router.get(
-    "/spend/tags",
-    tags=["budget & spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
-    responses={
-        200: {"model": List[LiteLLM_SpendLogs]},
-    },
-)
-async def view_spend_tags(
-    start_date: Optional[str] = fastapi.Query(
-        default=None,
-        description="Time from which to start viewing key spend",
-    ),
-    end_date: Optional[str] = fastapi.Query(
-        default=None,
-        description="Time till which to view key spend",
-    ),
-):
-    """
-    LiteLLM Enterprise - View Spend Per Request Tag
-
-    Example Request:
-    ```
-    curl -X GET "http://0.0.0.0:8000/spend/tags" \
--H "Authorization: Bearer sk-1234"
-    ```
-
-    Spend with Start Date and End Date
-    ```
-    curl -X GET "http://0.0.0.0:8000/spend/tags?start_date=2022-01-01&end_date=2022-02-01" \
--H "Authorization: Bearer sk-1234"
-    ```
-    """
-
-    from litellm.proxy.enterprise.utils import get_spend_by_tags
-
-    global prisma_client
-    try:
-        if prisma_client is None:
-            raise Exception(
-                f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
-            )
-
-        # run the following SQL query on prisma
-        """
-        SELECT
-        jsonb_array_elements_text(request_tags) AS individual_request_tag,
-        COUNT(*) AS log_count,
-        SUM(spend) AS total_spend
-        FROM "LiteLLM_SpendLogs"
-        GROUP BY individual_request_tag;
-        """
-        response = await get_spend_by_tags(
-            start_date=start_date, end_date=end_date, prisma_client=prisma_client
-        )
-
-        return response
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise ProxyException(
-                message=getattr(e, "detail", f"/spend/tags Error({str(e)})"),
-                type="internal_error",
-                param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_500_INTERNAL_SERVER_ERROR),
-            )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="/spend/tags Error" + str(e),
-            type="internal_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-
-
-@router.get(
-    "/spend/logs",
-    tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
-    responses={
-        200: {"model": List[LiteLLM_SpendLogs]},
-    },
-)
-async def view_spend_logs(
-    api_key: Optional[str] = fastapi.Query(
-        default=None,
-        description="Get spend logs based on api key",
-    ),
-    user_id: Optional[str] = fastapi.Query(
-        default=None,
-        description="Get spend logs based on user_id",
-    ),
-    request_id: Optional[str] = fastapi.Query(
-        default=None,
-        description="request_id to get spend logs for specific request_id. If none passed then pass spend logs for all requests",
-    ),
-    start_date: Optional[str] = fastapi.Query(
-        default=None,
-        description="Time from which to start viewing key spend",
-    ),
-    end_date: Optional[str] = fastapi.Query(
-        default=None,
-        description="Time till which to view key spend",
-    ),
-):
-    """
-    View all spend logs, if request_id is provided, only logs for that request_id will be returned
-
-    Example Request for all logs
-    ```
-    curl -X GET "http://0.0.0.0:8000/spend/logs" \
--H "Authorization: Bearer sk-1234"
-    ```
-
-    Example Request for specific request_id
-    ```
-    curl -X GET "http://0.0.0.0:8000/spend/logs?request_id=chatcmpl-6dcb2540-d3d7-4e49-bb27-291f863f112e" \
--H "Authorization: Bearer sk-1234"
-    ```
-
-    Example Request for specific api_key
-    ```
-    curl -X GET "http://0.0.0.0:8000/spend/logs?api_key=sk-Fn8Ej39NkBQmUagFEoUWPQ" \
--H "Authorization: Bearer sk-1234"
-    ```
-
-    Example Request for specific user_id
-    ```
-    curl -X GET "http://0.0.0.0:8000/spend/logs?user_id=ishaan@berri.ai" \
--H "Authorization: Bearer sk-1234"
-    ```
-    """
-    global prisma_client
-    try:
-        verbose_proxy_logger.debug("inside view_spend_logs")
-        if prisma_client is None:
-            raise Exception(
-                f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
-            )
-        spend_logs = []
-        if (
-            start_date is not None
-            and isinstance(start_date, str)
-            and end_date is not None
-            and isinstance(end_date, str)
-        ):
-            # Convert the date strings to datetime objects
-            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
-            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
-
-            filter_query = {
-                "startTime": {
-                    "gte": start_date_obj,  # Greater than or equal to Start Date
-                    "lte": end_date_obj,  # Less than or equal to End Date
-                }
-            }
-
-            if api_key is not None and isinstance(api_key, str):
-                filter_query["api_key"] = api_key  # type: ignore
-            elif request_id is not None and isinstance(request_id, str):
-                filter_query["request_id"] = request_id  # type: ignore
-            elif user_id is not None and isinstance(user_id, str):
-                filter_query["user"] = user_id  # type: ignore
-
-            # SQL query
-            response = await prisma_client.db.litellm_spendlogs.group_by(
-                by=["api_key", "user", "model", "startTime"],
-                where=filter_query,  # type: ignore
-                sum={
-                    "spend": True,
-                },
-            )
-
-            if (
-                isinstance(response, list)
-                and len(response) > 0
-                and isinstance(response[0], dict)
-            ):
-                result: dict = {}
-                for record in response:
-                    dt_object = datetime.strptime(
-                        str(record["startTime"]), "%Y-%m-%dT%H:%M:%S.%fZ"
-                    )  # type: ignore
-                    date = dt_object.date()
-                    if date not in result:
-                        result[date] = {"users": {}, "models": {}}
-                    api_key = record["api_key"]
-                    user_id = record["user"]
-                    model = record["model"]
-                    result[date]["spend"] = (
-                        result[date].get("spend", 0) + record["_sum"]["spend"]
-                    )
-                    result[date][api_key] = (
-                        result[date].get(api_key, 0) + record["_sum"]["spend"]
-                    )
-                    result[date]["users"][user_id] = (
-                        result[date]["users"].get(user_id, 0) + record["_sum"]["spend"]
-                    )
-                    result[date]["models"][model] = (
-                        result[date]["models"].get(model, 0) + record["_sum"]["spend"]
-                    )
-                return_list = []
-                final_date = None
-                for k, v in sorted(result.items()):
-                    return_list.append({**v, "startTime": k})
-                    final_date = k
-
-                end_date_date = end_date_obj.date()
-                if final_date is not None and final_date < end_date_date:
-                    current_date = final_date + timedelta(days=1)
-                    while current_date <= end_date_date:
-                        # Represent current_date as string because original response has it this way
-                        return_list.append(
-                            {
-                                "startTime": current_date,
-                                "spend": 0,
-                                "users": {},
-                                "models": {},
-                            }
-                        )  # If no data, will stay as zero
-                        current_date += timedelta(days=1)  # Move on to the next day
-
-                return return_list
-
-            return response
-
-        elif api_key is not None and isinstance(api_key, str):
-            if api_key.startswith("sk-"):
-                hashed_token = prisma_client.hash_token(token=api_key)
-            else:
-                hashed_token = api_key
-            spend_log = await prisma_client.get_data(
-                table_name="spend",
-                query_type="find_all",
-                key_val={"key": "api_key", "value": hashed_token},
-            )
-            if isinstance(spend_log, list):
-                return spend_log
-            else:
-                return [spend_log]
-        elif request_id is not None:
-            spend_log = await prisma_client.get_data(
-                table_name="spend",
-                query_type="find_unique",
-                key_val={"key": "request_id", "value": request_id},
-            )
-            return [spend_log]
-        elif user_id is not None:
-            spend_log = await prisma_client.get_data(
-                table_name="spend",
-                query_type="find_all",
-                key_val={"key": "user", "value": user_id},
-            )
-            if isinstance(spend_log, list):
-                return spend_log
-            else:
-                return [spend_log]
-        else:
-            spend_logs = await prisma_client.get_data(
-                table_name="spend", query_type="find_all"
-            )
-
-            return spend_log
-
-        return None
-
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise ProxyException(
-                message=getattr(e, "detail", f"/spend/logs Error({str(e)})"),
-                type="internal_error",
-                param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_500_INTERNAL_SERVER_ERROR),
-            )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="/spend/logs Error" + str(e),
-            type="internal_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-
-
-@router.get(
-    "/global/spend/logs",
-    tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def global_spend_logs(
-    api_key: str = fastapi.Query(
-        default=None,
-        description="API Key to get global spend (spend per day for last 30d). Admin-only endpoint",
+    @router.post(
+        "/key/delete", tags=["key management"], dependencies=[Depends(user_api_key_auth)]
     )
-):
-    """
-    [BETA] This is a beta endpoint. It will change.
-
-    Use this to get global spend (spend per day for last 30d). Admin-only endpoint
-
-    More efficient implementation of /spend/logs, by creating a view over the spend logs table.
-    """
-    global prisma_client
-    if prisma_client is None:
-        raise ProxyException(
-            message="Prisma Client is not initialized",
-            type="internal_error",
-            param="None",
-            code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-    if api_key is None:
-        sql_query = """SELECT * FROM "MonthlyGlobalSpend";"""
-
-        response = await prisma_client.db.query_raw(query=sql_query)
-
-        return response
-    else:
-        sql_query = (
-            """
-            SELECT * FROM "MonthlyGlobalSpendPerKey"
-            WHERE "api_key" = '"""
-            + api_key
-            + """'
-            ORDER BY "date";
+    async def delete_key_fn(data: KeyRequest):
         """
-        )
+        Delete a key from the key management system.
 
-        response = await prisma_client.db.query_raw(query=sql_query)
+        Parameters::
+        - keys (List[str]): A list of keys or hashed keys to delete. Example {"keys": ["sk-QWrxEynunsNpV1zT48HIrw", "837e17519f44683334df5291321d97b8bf1098cd490e49e215f6fea935aa28be"]}
 
-        return response
-    return
-
-
-@router.get(
-    "/global/spend/keys",
-    tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def global_spend_keys(
-    limit: int = fastapi.Query(
-        default=None,
-        description="Number of keys to get. Will return Top 'n' keys.",
-    )
-):
-    """
-    [BETA] This is a beta endpoint. It will change.
-
-    Use this to get the top 'n' keys with the highest spend, ordered by spend.
-    """
-    global prisma_client
-
-    if prisma_client is None:
-        raise HTTPException(status_code=500, detail={"error": "No db connected"})
-    sql_query = f"""SELECT * FROM "Last30dKeysBySpend" LIMIT {limit};"""
-
-    response = await prisma_client.db.query_raw(query=sql_query)
-
-    return response
+        Returns:
+        - deleted_keys (List[str]): A list of deleted keys. Example {"deleted_keys": ["sk-QWrxEynunsNpV1zT48HIrw", "837e17519f44683334df5291321d97b8bf1098cd490e49e215f6fea935aa28be"]}
 
 
-@router.post(
-    "/global/spend/end_users",
-    tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def global_spend_end_users(data: Optional[GlobalEndUsersSpend] = None):
-    """
-    [BETA] This is a beta endpoint. It will change.
-
-    Use this to get the top 'n' keys with the highest spend, ordered by spend.
-    """
-    global prisma_client
-
-    if prisma_client is None:
-        raise HTTPException(status_code=500, detail={"error": "No db connected"})
-
-    if data is None:
-        sql_query = f"""SELECT * FROM "Last30dTopEndUsersSpend";"""
-
-        response = await prisma_client.db.query_raw(query=sql_query)
-    else:
+        Raises:
+            HTTPException: If an error occurs during key deletion.
         """
-        Gets the top 100 end-users for a given api key
-        """
-        current_date = datetime.now()
-        past_date = current_date - timedelta(days=30)
-        response = await prisma_client.db.litellm_spendlogs.group_by(  # type: ignore
-            by=["end_user"],
-            where={
-                "AND": [{"startTime": {"gte": past_date}}, {"api_key": data.api_key}]  # type: ignore
-            },
-            sum={"spend": True},
-            order={"_sum": {"spend": "desc"}},  # type: ignore
-            take=100,
-            count=True,
-        )
-        if response is not None and isinstance(response, list):
-            new_response = []
-            for r in response:
-                new_r = r
-                new_r["total_spend"] = r["_sum"]["spend"]
-                new_r["total_count"] = r["_count"]["_all"]
-                new_r.pop("_sum")
-                new_r.pop("_count")
-                new_response.append(new_r)
-
-    return response
-
-
-@router.get(
-    "/global/spend/models",
-    tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def global_spend_models(
-    limit: int = fastapi.Query(
-        default=None,
-        description="Number of models to get. Will return Top 'n' models.",
-    )
-):
-    """
-    [BETA] This is a beta endpoint. It will change.
-
-    Use this to get the top 'n' keys with the highest spend, ordered by spend.
-    """
-    global prisma_client
-
-    if prisma_client is None:
-        raise HTTPException(status_code=500, detail={"error": "No db connected"})
-
-    sql_query = f"""SELECT * FROM "Last30dModelsBySpend" LIMIT {limit};"""
-
-    response = await prisma_client.db.query_raw(query=sql_query)
-
-    return response
-
-
-@router.post(
-    "/global/predict/spend/logs",
-    tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def global_predict_spend_logs(request: Request):
-    from litellm.proxy.enterprise.utils import _forecast_daily_cost
-
-    data = await request.json()
-    data = data.get("data")
-    return _forecast_daily_cost(data)
-
-
-#### USER MANAGEMENT ####
-@router.post(
-    "/user/new",
-    tags=["user management"],
-    dependencies=[Depends(user_api_key_auth)],
-    response_model=NewUserResponse,
-)
-async def new_user(data: NewUserRequest):
-    """
-    Use this to create a new user with a budget. This creates a new user and generates a new api key for the new user. The new api key is returned.
-
-    Returns user id, budget + new key.
-
-    Parameters:
-    - user_id: Optional[str] - Specify a user id. If not set, a unique id will be generated.
-    - user_email: Optional[str] - Specify a user email.
-    - user_role: Optional[str] - Specify a user role - "admin", "app_owner", "app_user"
-    - max_budget: Optional[float] - Specify max budget for a given user.
-    - models: Optional[list] - Model_name's a user is allowed to call. (if empty, key is allowed to call all models)
-    - tpm_limit: Optional[int] - Specify tpm limit for a given user (Tokens per minute)
-    - rpm_limit: Optional[int] - Specify rpm limit for a given user (Requests per minute)
-
-    Returns:
-    - key: (str) The generated api key for the user
-    - expires: (datetime) Datetime object for when key expires.
-    - user_id: (str) Unique user id - used for tracking spend across multiple keys for same user id.
-    - max_budget: (float|None) Max budget for given user.
-    """
-    data_json = data.json()  # type: ignore
-    if "user_role" in data_json:
-        user_role = data_json["user_role"]
-        if user_role is not None:
-            if user_role not in ["admin", "app_owner", "app_user"]:
+        try:
+            global user_api_key_cache
+            keys = data.keys
+            if len(keys) == 0:
                 raise ProxyException(
-                    message=f"Invalid user role, passed in {user_role}. Must be one of 'admin', 'app_owner', 'app_user'",
-                    type="invalid_user_role",
-                    param="user_role",
+                    message=f"No keys provided, passed in: keys={keys}",
+                    type="auth_error",
+                    param="keys",
                     code=status.HTTP_400_BAD_REQUEST,
                 )
-    response = await generate_key_helper_fn(**data_json)
-    return NewUserResponse(
-        key=response["token"],
-        expires=response["expires"],
-        user_id=response["user_id"],
-        max_budget=response["max_budget"],
+
+            result = await delete_verification_token(tokens=keys)
+            verbose_proxy_logger.debug("/key/delete - deleted_keys=", result)
+
+            number_deleted_keys = len(result["deleted_keys"])
+            assert len(keys) == number_deleted_keys
+
+            for key in keys:
+                user_api_key_cache.delete_cache(key)
+                # remove hash token from cache
+                hashed_token = hash_token(key)
+                user_api_key_cache.delete_cache(hashed_token)
+
+            verbose_proxy_logger.debug(
+                f"/keys/delete - cache after delete: {user_api_key_cache.in_memory_cache.cache_dict}"
+            )
+
+            return {"deleted_keys": keys}
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
+            raise ProxyException(
+                message="Authentication Error, " + str(e),
+                type="auth_error",
+                param=getattr(e, "param", "None"),
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+    @router.post(
+        "/v2/key/info", tags=["key management"], dependencies=[Depends(user_api_key_auth)]
     )
+    async def info_key_fn_v2(
+        data: Optional[KeyRequest] = None,
+        user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+    ):
+        """
+        Retrieve information about a list of keys.
+
+        **New endpoint**. Currently admin only.
+        Parameters:
+            keys: Optional[list] = body parameter representing the key(s) in the request
+            user_api_key_dict: UserAPIKeyAuth = Dependency representing the user's API key
+        Returns:
+            Dict containing the key and its associated information
+        
+        Example Curl:
+        ```
+        curl -X GET "http://0.0.0.0:8000/key/info" \
+        -H "Authorization: Bearer sk-1234" \
+        -d {"keys": ["sk-1", "sk-2", "sk-3"]}
+        ```
+        """
+        global prisma_client
+        try:
+            if prisma_client is None:
+                raise Exception(
+                    f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
+                )
+            if data is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"message": "Malformed request. No keys passed in."},
+                )
+
+            key_info = await prisma_client.get_data(
+                token=data.keys, table_name="key", query_type="find_all"
+            )
+            filtered_key_info = []
+            for k in key_info:
+                try:
+                    k = k.model_dump()  # noqa
+                except:
+                    # if using pydantic v1
+                    k = k.dict()
+                filtered_key_info.append(k)
+            return {"key": data.keys, "info": filtered_key_info}
+
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
+            raise ProxyException(
+                message="Authentication Error, " + str(e),
+                type="auth_error",
+                param=getattr(e, "param", "None"),
+                code=status.HTTP_400_BAD_REQUEST,
+            )
 
 
-@router.post(
-    "/user/auth", tags=["user management"], dependencies=[Depends(user_api_key_auth)]
-)
-async def user_auth(request: Request):
-    """
-    Allows UI ("https://dashboard.litellm.ai/", or self-hosted - os.getenv("LITELLM_HOSTED_UI")) to request a magic link to be sent to user email, for auth to proxy.
-
-    Only allows emails from accepted email subdomains.
-
-    Rate limit: 1 request every 60s.
-
-    Only works, if you enable 'allow_user_auth' in general settings:
-    e.g.:
-    ```yaml
-    general_settings:
-        allow_user_auth: true
-    ```
-
-    Requirements:
-    SMTP server details saved in .env:
-    - os.environ["SMTP_HOST"]
-    - os.environ["SMTP_PORT"]
-    - os.environ["SMTP_USERNAME"]
-    - os.environ["SMTP_PASSWORD"]
-    - os.environ["SMTP_SENDER_EMAIL"]
-    """
-    global prisma_client
-
-    data = await request.json()  # type: ignore
-    user_email = data["user_email"]
-    page_params = data["page"]
-    if user_email is None:
-        raise HTTPException(status_code=400, detail="User email is none")
-
-    if prisma_client is None:  # if no db connected, raise an error
-        raise Exception("No connected db.")
-
-    ### Check if user email in user table
-    response = await prisma_client.get_generic_data(
-        key="user_email", value=user_email, table_name="users"
+    @router.get(
+        "/key/info", tags=["key management"], dependencies=[Depends(user_api_key_auth)]
     )
-    ### if so - generate a 24 hr key with that user id
-    if response is not None:
-        user_id = response.user_id
-        response = await generate_key_helper_fn(
-            **{"duration": "24hr", "models": [], "aliases": {}, "config": {}, "spend": 0, "user_id": user_id}  # type: ignore
-        )
-    else:  ### else - create new user
-        response = await generate_key_helper_fn(
-            **{"duration": "24hr", "models": [], "aliases": {}, "config": {}, "spend": 0, "user_email": user_email}  # type: ignore
-        )
+    async def info_key_fn(
+        key: Optional[str] = fastapi.Query(
+            default=None, description="Key in the request parameters"
+        ),
+        user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+    ):
+        """
+        Retrieve information about a key.
+        Parameters:
+            key: Optional[str] = Query parameter representing the key in the request
+            user_api_key_dict: UserAPIKeyAuth = Dependency representing the user's API key
+        Returns:
+            Dict containing the key and its associated information
+        
+        Example Curl:
+        ```
+        curl -X GET "http://0.0.0.0:8000/key/info?key=sk-02Wr4IAlN3NvPXvL5JVvDA" \
+    -H "Authorization: Bearer sk-1234"
+        ```
 
-    base_url = os.getenv("LITELLM_HOSTED_UI", "https://dashboard.litellm.ai/")
-
-    params = {
-        "sender_name": "LiteLLM Proxy",
-        "sender_email": os.getenv("SMTP_SENDER_EMAIL"),
-        "receiver_email": user_email,
-        "subject": "Your Magic Link",
-        "html": f"<strong> Follow this  link, to login:\n\n{base_url}user/?token={response['token']}&user_id={response['user_id']}&page={page_params}</strong>",
-    }
-
-    await send_email(**params)
-    return "Email sent!"
-
-
-@router.get(
-    "/user/info", tags=["user management"], dependencies=[Depends(user_api_key_auth)]
-)
-async def user_info(
-    user_id: Optional[str] = fastapi.Query(
-        default=None, description="User ID in the request parameters"
-    ),
-    view_all: bool = fastapi.Query(
-        default=False,
-        description="set to true to View all users. When using view_all, don't pass user_id",
-    ),
-    page: Optional[int] = fastapi.Query(
-        default=0,
-        description="Page number for pagination. Only use when view_all is true",
-    ),
-    page_size: Optional[int] = fastapi.Query(
-        default=25,
-        description="Number of items per page. Only use when view_all is true",
-    ),
-    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
-):
-    """
-    Use this to get user information. (user row + all user key info)
-
-    Example request
-    ```
-    curl -X GET 'http://localhost:8000/user/info?user_id=krrish7%40berri.ai' \
-    --header 'Authorization: Bearer sk-1234'
-    ```
-    """
-    global prisma_client
-    try:
-        if prisma_client is None:
-            raise Exception(
-                f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
-            )
-        ## GET USER ROW ##
-        if user_id is not None:
-            user_info = await prisma_client.get_data(user_id=user_id)
-        elif view_all == True:
-            if page is None:
-                page = 0
-            if page_size is None:
-                page_size = 25
-            offset = (page) * page_size  # default is 0
-            limit = page_size  # default is 10
-            user_info = await prisma_client.get_data(
-                table_name="user", query_type="find_all", offset=offset, limit=limit
-            )
-            return user_info
-        else:
-            user_info = None
-        ## GET ALL TEAMS ##
-        team_list = []
-        team_id_list = []
-        # _DEPRECATED_ check if user in 'member' field
-        teams_1 = await prisma_client.get_data(
-            user_id=user_id, table_name="team", query_type="find_all"
-        )
-
-        if teams_1 is not None and isinstance(teams_1, list):
-            team_list = teams_1
-            for team in teams_1:
-                team_id_list.append(team.team_id)
-
-        if user_info is not None:
-            # *NEW* get all teams in user 'teams' field
-            teams_2 = await prisma_client.get_data(
-                team_id_list=user_info.teams, table_name="team", query_type="find_all"
-            )
-
-            if teams_2 is not None and isinstance(teams_2, list):
-                for team in teams_2:
-                    if team.team_id not in team_id_list:
-                        team_list.append(team)
-                        team_id_list.append(team.team_id)
-        elif user_api_key_dict.user_id is not None:
-            caller_user_info = await prisma_client.get_data(
-                user_id=user_api_key_dict.user_id
-            )
-            # *NEW* get all teams in user 'teams' field
-            teams_2 = await prisma_client.get_data(
-                team_id_list=caller_user_info.teams,
-                table_name="team",
-                query_type="find_all",
-            )
-
-            if teams_2 is not None and isinstance(teams_2, list):
-                for team in teams_2:
-                    if team.team_id not in team_id_list:
-                        team_list.append(team)
-                        team_id_list.append(team.team_id)
-
-        ## GET ALL KEYS ##
-        keys = await prisma_client.get_data(
-            user_id=user_id,
-            table_name="key",
-            query_type="find_all",
-            expires=datetime.now(),
-        )
-
-        if user_info is None:
-            ## make sure we still return a total spend ##
-            spend = 0
-            for k in keys:
-                spend += getattr(k, "spend", 0)
-            user_info = {"spend": spend}
-
-        ## REMOVE HASHED TOKEN INFO before returning ##
-        for key in keys:
+        Example Curl - if no key is passed, it will use the Key Passed in Authorization Header
+        ```
+        curl -X GET "http://0.0.0.0:8000/key/info" \
+    -H "Authorization: Bearer sk-02Wr4IAlN3NvPXvL5JVvDA"
+        ```
+        """
+        global prisma_client
+        try:
+            if prisma_client is None:
+                raise Exception(
+                    f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
+                )
+            if key == None:
+                key = user_api_key_dict.api_key
+            key_info = await prisma_client.get_data(token=key)
+            ## REMOVE HASHED TOKEN INFO BEFORE RETURNING ##
             try:
-                key = key.model_dump()  # noqa
+                key_info = key_info.model_dump()  # noqa
             except:
                 # if using pydantic v1
-                key = key.dict()
-            key.pop("token", None)
-
-        response_data = {
-            "user_id": user_id,
-            "user_info": user_info,
-            "keys": keys,
-            "teams": team_list,
-        }
-        return response_data
-    except Exception as e:
-        traceback.print_exc()
-        if isinstance(e, HTTPException):
+                key_info = key_info.dict()
+            key_info.pop("token")
+            return {"key": key, "info": key_info}
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
             raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                message="Authentication Error, " + str(e),
                 type="auth_error",
                 param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                code=status.HTTP_400_BAD_REQUEST,
             )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
+
+if enable_extra_admin:
+    #### SPEND MANAGEMENT #####
+
+
+    @router.get(
+        "/spend/keys",
+        tags=["budget & spend Tracking"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def spend_key_fn():
+        """
+        View all keys created, ordered by spend
+
+        Example Request: 
+        ```
+        curl -X GET "http://0.0.0.0:8000/spend/keys" \
+    -H "Authorization: Bearer sk-1234"
+        ```
+        """
+        global prisma_client
+        try:
+            if prisma_client is None:
+                raise Exception(
+                    f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
+                )
+
+            key_info = await prisma_client.get_data(table_name="key", query_type="find_all")
+            return key_info
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": str(e)},
+            )
+
+
+    @router.get(
+        "/spend/users",
+        tags=["budget & spend Tracking"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def spend_user_fn(
+        user_id: Optional[str] = fastapi.Query(
+            default=None,
+            description="Get User Table row for user_id",
+        ),
+    ):
+        """
+        View all users created, ordered by spend
+
+        Example Request: 
+        ```
+        curl -X GET "http://0.0.0.0:8000/spend/users" \
+    -H "Authorization: Bearer sk-1234"
+        ```
+
+        View User Table row for user_id
+        ```
+        curl -X GET "http://0.0.0.0:8000/spend/users?user_id=1234" \
+    -H "Authorization: Bearer sk-1234"
+        ```
+        """
+        global prisma_client
+        try:
+            if prisma_client is None:
+                raise Exception(
+                    f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
+                )
+
+            if user_id is not None:
+                user_info = await prisma_client.get_data(
+                    table_name="user", query_type="find_unique", user_id=user_id
+                )
+                return [user_info]
+            else:
+                user_info = await prisma_client.get_data(
+                    table_name="user", query_type="find_all"
+                )
+
+            return user_info
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": str(e)},
+            )
+
+
+    @router.get(
+        "/spend/tags",
+        tags=["budget & spend Tracking"],
+        dependencies=[Depends(user_api_key_auth)],
+        responses={
+            200: {"model": List[LiteLLM_SpendLogs]},
+        },
+    )
+    async def view_spend_tags(
+        start_date: Optional[str] = fastapi.Query(
+            default=None,
+            description="Time from which to start viewing key spend",
+        ),
+        end_date: Optional[str] = fastapi.Query(
+            default=None,
+            description="Time till which to view key spend",
+        ),
+    ):
+        """
+        LiteLLM Enterprise - View Spend Per Request Tag
+
+        Example Request:
+        ```
+        curl -X GET "http://0.0.0.0:8000/spend/tags" \
+    -H "Authorization: Bearer sk-1234"
+        ```
+
+        Spend with Start Date and End Date
+        ```
+        curl -X GET "http://0.0.0.0:8000/spend/tags?start_date=2022-01-01&end_date=2022-02-01" \
+    -H "Authorization: Bearer sk-1234"
+        ```
+        """
+
+        from litellm.proxy.enterprise.utils import get_spend_by_tags
+
+        global prisma_client
+        try:
+            if prisma_client is None:
+                raise Exception(
+                    f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
+                )
+
+            # run the following SQL query on prisma
+            """
+            SELECT
+            jsonb_array_elements_text(request_tags) AS individual_request_tag,
+            COUNT(*) AS log_count,
+            SUM(spend) AS total_spend
+            FROM "LiteLLM_SpendLogs"
+            GROUP BY individual_request_tag;
+            """
+            response = await get_spend_by_tags(
+                start_date=start_date, end_date=end_date, prisma_client=prisma_client
+            )
+
+            return response
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"/spend/tags Error({str(e)})"),
+                    type="internal_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_500_INTERNAL_SERVER_ERROR),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
+            raise ProxyException(
+                message="/spend/tags Error" + str(e),
+                type="internal_error",
+                param=getattr(e, "param", "None"),
+                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+    @router.get(
+        "/spend/logs",
+        tags=["Budget & Spend Tracking"],
+        dependencies=[Depends(user_api_key_auth)],
+        responses={
+            200: {"model": List[LiteLLM_SpendLogs]},
+        },
+    )
+    async def view_spend_logs(
+        api_key: Optional[str] = fastapi.Query(
+            default=None,
+            description="Get spend logs based on api key",
+        ),
+        user_id: Optional[str] = fastapi.Query(
+            default=None,
+            description="Get spend logs based on user_id",
+        ),
+        request_id: Optional[str] = fastapi.Query(
+            default=None,
+            description="request_id to get spend logs for specific request_id. If none passed then pass spend logs for all requests",
+        ),
+        start_date: Optional[str] = fastapi.Query(
+            default=None,
+            description="Time from which to start viewing key spend",
+        ),
+        end_date: Optional[str] = fastapi.Query(
+            default=None,
+            description="Time till which to view key spend",
+        ),
+    ):
+        """
+        View all spend logs, if request_id is provided, only logs for that request_id will be returned
+
+        Example Request for all logs
+        ```
+        curl -X GET "http://0.0.0.0:8000/spend/logs" \
+    -H "Authorization: Bearer sk-1234"
+        ```
+
+        Example Request for specific request_id
+        ```
+        curl -X GET "http://0.0.0.0:8000/spend/logs?request_id=chatcmpl-6dcb2540-d3d7-4e49-bb27-291f863f112e" \
+    -H "Authorization: Bearer sk-1234"
+        ```
+
+        Example Request for specific api_key
+        ```
+        curl -X GET "http://0.0.0.0:8000/spend/logs?api_key=sk-Fn8Ej39NkBQmUagFEoUWPQ" \
+    -H "Authorization: Bearer sk-1234"
+        ```
+
+        Example Request for specific user_id
+        ```
+        curl -X GET "http://0.0.0.0:8000/spend/logs?user_id=ishaan@berri.ai" \
+    -H "Authorization: Bearer sk-1234"
+        ```
+        """
+        global prisma_client
+        try:
+            verbose_proxy_logger.debug("inside view_spend_logs")
+            if prisma_client is None:
+                raise Exception(
+                    f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
+                )
+            spend_logs = []
+            if (
+                start_date is not None
+                and isinstance(start_date, str)
+                and end_date is not None
+                and isinstance(end_date, str)
+            ):
+                # Convert the date strings to datetime objects
+                start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
+                end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
+
+                filter_query = {
+                    "startTime": {
+                        "gte": start_date_obj,  # Greater than or equal to Start Date
+                        "lte": end_date_obj,  # Less than or equal to End Date
+                    }
+                }
+
+                if api_key is not None and isinstance(api_key, str):
+                    filter_query["api_key"] = api_key  # type: ignore
+                elif request_id is not None and isinstance(request_id, str):
+                    filter_query["request_id"] = request_id  # type: ignore
+                elif user_id is not None and isinstance(user_id, str):
+                    filter_query["user"] = user_id  # type: ignore
+
+                # SQL query
+                response = await prisma_client.db.litellm_spendlogs.group_by(
+                    by=["api_key", "user", "model", "startTime"],
+                    where=filter_query,  # type: ignore
+                    sum={
+                        "spend": True,
+                    },
+                )
+
+                if (
+                    isinstance(response, list)
+                    and len(response) > 0
+                    and isinstance(response[0], dict)
+                ):
+                    result: dict = {}
+                    for record in response:
+                        dt_object = datetime.strptime(
+                            str(record["startTime"]), "%Y-%m-%dT%H:%M:%S.%fZ"
+                        )  # type: ignore
+                        date = dt_object.date()
+                        if date not in result:
+                            result[date] = {"users": {}, "models": {}}
+                        api_key = record["api_key"]
+                        user_id = record["user"]
+                        model = record["model"]
+                        result[date]["spend"] = (
+                            result[date].get("spend", 0) + record["_sum"]["spend"]
+                        )
+                        result[date][api_key] = (
+                            result[date].get(api_key, 0) + record["_sum"]["spend"]
+                        )
+                        result[date]["users"][user_id] = (
+                            result[date]["users"].get(user_id, 0) + record["_sum"]["spend"]
+                        )
+                        result[date]["models"][model] = (
+                            result[date]["models"].get(model, 0) + record["_sum"]["spend"]
+                        )
+                    return_list = []
+                    final_date = None
+                    for k, v in sorted(result.items()):
+                        return_list.append({**v, "startTime": k})
+                        final_date = k
+
+                    end_date_date = end_date_obj.date()
+                    if final_date is not None and final_date < end_date_date:
+                        current_date = final_date + timedelta(days=1)
+                        while current_date <= end_date_date:
+                            # Represent current_date as string because original response has it this way
+                            return_list.append(
+                                {
+                                    "startTime": current_date,
+                                    "spend": 0,
+                                    "users": {},
+                                    "models": {},
+                                }
+                            )  # If no data, will stay as zero
+                            current_date += timedelta(days=1)  # Move on to the next day
+
+                    return return_list
+
+                return response
+
+            elif api_key is not None and isinstance(api_key, str):
+                if api_key.startswith("sk-"):
+                    hashed_token = prisma_client.hash_token(token=api_key)
+                else:
+                    hashed_token = api_key
+                spend_log = await prisma_client.get_data(
+                    table_name="spend",
+                    query_type="find_all",
+                    key_val={"key": "api_key", "value": hashed_token},
+                )
+                if isinstance(spend_log, list):
+                    return spend_log
+                else:
+                    return [spend_log]
+            elif request_id is not None:
+                spend_log = await prisma_client.get_data(
+                    table_name="spend",
+                    query_type="find_unique",
+                    key_val={"key": "request_id", "value": request_id},
+                )
+                return [spend_log]
+            elif user_id is not None:
+                spend_log = await prisma_client.get_data(
+                    table_name="spend",
+                    query_type="find_all",
+                    key_val={"key": "user", "value": user_id},
+                )
+                if isinstance(spend_log, list):
+                    return spend_log
+                else:
+                    return [spend_log]
+            else:
+                spend_logs = await prisma_client.get_data(
+                    table_name="spend", query_type="find_all"
+                )
+
+                return spend_log
+
+            return None
+
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"/spend/logs Error({str(e)})"),
+                    type="internal_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_500_INTERNAL_SERVER_ERROR),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
+            raise ProxyException(
+                message="/spend/logs Error" + str(e),
+                type="internal_error",
+                param=getattr(e, "param", "None"),
+                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+    @router.get(
+        "/global/spend/logs",
+        tags=["Budget & Spend Tracking"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def global_spend_logs(
+        api_key: str = fastapi.Query(
+            default=None,
+            description="API Key to get global spend (spend per day for last 30d). Admin-only endpoint",
+        )
+    ):
+        """
+        [BETA] This is a beta endpoint. It will change.
+
+        Use this to get global spend (spend per day for last 30d). Admin-only endpoint
+
+        More efficient implementation of /spend/logs, by creating a view over the spend logs table.
+        """
+        global prisma_client
+        if prisma_client is None:
+            raise ProxyException(
+                message="Prisma Client is not initialized",
+                type="internal_error",
+                param="None",
+                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        if api_key is None:
+            sql_query = """SELECT * FROM "MonthlyGlobalSpend";"""
+
+            response = await prisma_client.db.query_raw(query=sql_query)
+
+            return response
+        else:
+            sql_query = (
+                """
+                SELECT * FROM "MonthlyGlobalSpendPerKey"
+                WHERE "api_key" = '"""
+                + api_key
+                + """'
+                ORDER BY "date";
+            """
+            )
+
+            response = await prisma_client.db.query_raw(query=sql_query)
+
+            return response
+        return
+
+
+    @router.get(
+        "/global/spend/keys",
+        tags=["Budget & Spend Tracking"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def global_spend_keys(
+        limit: int = fastapi.Query(
+            default=None,
+            description="Number of keys to get. Will return Top 'n' keys.",
+        )
+    ):
+        """
+        [BETA] This is a beta endpoint. It will change.
+
+        Use this to get the top 'n' keys with the highest spend, ordered by spend.
+        """
+        global prisma_client
+
+        if prisma_client is None:
+            raise HTTPException(status_code=500, detail={"error": "No db connected"})
+        sql_query = f"""SELECT * FROM "Last30dKeysBySpend" LIMIT {limit};"""
+
+        response = await prisma_client.db.query_raw(query=sql_query)
+
+        return response
+
+
+    @router.post(
+        "/global/spend/end_users",
+        tags=["Budget & Spend Tracking"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def global_spend_end_users(data: Optional[GlobalEndUsersSpend] = None):
+        """
+        [BETA] This is a beta endpoint. It will change.
+
+        Use this to get the top 'n' keys with the highest spend, ordered by spend.
+        """
+        global prisma_client
+
+        if prisma_client is None:
+            raise HTTPException(status_code=500, detail={"error": "No db connected"})
+
+        if data is None:
+            sql_query = f"""SELECT * FROM "Last30dTopEndUsersSpend";"""
+
+            response = await prisma_client.db.query_raw(query=sql_query)
+        else:
+            """
+            Gets the top 100 end-users for a given api key
+            """
+            current_date = datetime.now()
+            past_date = current_date - timedelta(days=30)
+            response = await prisma_client.db.litellm_spendlogs.group_by(  # type: ignore
+                by=["end_user"],
+                where={
+                    "AND": [{"startTime": {"gte": past_date}}, {"api_key": data.api_key}]  # type: ignore
+                },
+                sum={"spend": True},
+                order={"_sum": {"spend": "desc"}},  # type: ignore
+                take=100,
+                count=True,
+            )
+            if response is not None and isinstance(response, list):
+                new_response = []
+                for r in response:
+                    new_r = r
+                    new_r["total_spend"] = r["_sum"]["spend"]
+                    new_r["total_count"] = r["_count"]["_all"]
+                    new_r.pop("_sum")
+                    new_r.pop("_count")
+                    new_response.append(new_r)
+
+        return response
+
+
+    @router.get(
+        "/global/spend/models",
+        tags=["Budget & Spend Tracking"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def global_spend_models(
+        limit: int = fastapi.Query(
+            default=None,
+            description="Number of models to get. Will return Top 'n' models.",
+        )
+    ):
+        """
+        [BETA] This is a beta endpoint. It will change.
+
+        Use this to get the top 'n' keys with the highest spend, ordered by spend.
+        """
+        global prisma_client
+
+        if prisma_client is None:
+            raise HTTPException(status_code=500, detail={"error": "No db connected"})
+
+        sql_query = f"""SELECT * FROM "Last30dModelsBySpend" LIMIT {limit};"""
+
+        response = await prisma_client.db.query_raw(query=sql_query)
+
+        return response
+
+
+    @router.post(
+        "/global/predict/spend/logs",
+        tags=["Budget & Spend Tracking"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def global_predict_spend_logs(request: Request):
+        from litellm.proxy.enterprise.utils import _forecast_daily_cost
+
+        data = await request.json()
+        data = data.get("data")
+        return _forecast_daily_cost(data)
+
+if enable_extra_admin:
+    #### USER MANAGEMENT ####
+    @router.post(
+        "/user/new",
+        tags=["user management"],
+        dependencies=[Depends(user_api_key_auth)],
+        response_model=NewUserResponse,
+    )
+    async def new_user(data: NewUserRequest):
+        """
+        Use this to create a new user with a budget. This creates a new user and generates a new api key for the new user. The new api key is returned.
+
+        Returns user id, budget + new key.
+
+        Parameters:
+        - user_id: Optional[str] - Specify a user id. If not set, a unique id will be generated.
+        - user_email: Optional[str] - Specify a user email.
+        - user_role: Optional[str] - Specify a user role - "admin", "app_owner", "app_user"
+        - max_budget: Optional[float] - Specify max budget for a given user.
+        - models: Optional[list] - Model_name's a user is allowed to call. (if empty, key is allowed to call all models)
+        - tpm_limit: Optional[int] - Specify tpm limit for a given user (Tokens per minute)
+        - rpm_limit: Optional[int] - Specify rpm limit for a given user (Requests per minute)
+
+        Returns:
+        - key: (str) The generated api key for the user
+        - expires: (datetime) Datetime object for when key expires.
+        - user_id: (str) Unique user id - used for tracking spend across multiple keys for same user id.
+        - max_budget: (float|None) Max budget for given user.
+        """
+        data_json = data.json()  # type: ignore
+        if "user_role" in data_json:
+            user_role = data_json["user_role"]
+            if user_role is not None:
+                if user_role not in ["admin", "app_owner", "app_user"]:
+                    raise ProxyException(
+                        message=f"Invalid user role, passed in {user_role}. Must be one of 'admin', 'app_owner', 'app_user'",
+                        type="invalid_user_role",
+                        param="user_role",
+                        code=status.HTTP_400_BAD_REQUEST,
+                    )
+        response = await generate_key_helper_fn(**data_json)
+        return NewUserResponse(
+            key=response["token"],
+            expires=response["expires"],
+            user_id=response["user_id"],
+            max_budget=response["max_budget"],
         )
 
 
-@router.post(
-    "/user/update", tags=["user management"], dependencies=[Depends(user_api_key_auth)]
-)
-async def user_update(data: UpdateUserRequest):
-    """
-    [TODO]: Use this to update user budget
-    """
-    global prisma_client
-    try:
-        data_json: dict = data.json()
-        # get the row from db
-        if prisma_client is None:
-            raise Exception("Not connected to DB!")
+    @router.post(
+        "/user/auth", tags=["user management"], dependencies=[Depends(user_api_key_auth)]
+    )
+    async def user_auth(request: Request):
+        """
+        Allows UI ("https://dashboard.litellm.ai/", or self-hosted - os.getenv("LITELLM_HOSTED_UI")) to request a magic link to be sent to user email, for auth to proxy.
 
-        # get non default values for key
-        non_default_values = {}
-        for k, v in data_json.items():
-            if v is not None and v not in (
-                [],
-                {},
-                0,
-            ):  # models default to [], spend defaults to 0, we should not reset these values
-                non_default_values[k] = v
+        Only allows emails from accepted email subdomains.
+
+        Rate limit: 1 request every 60s.
+
+        Only works, if you enable 'allow_user_auth' in general settings:
+        e.g.:
+        ```yaml
+        general_settings:
+            allow_user_auth: true
+        ```
+
+        Requirements:
+        SMTP server details saved in .env:
+        - os.environ["SMTP_HOST"]
+        - os.environ["SMTP_PORT"]
+        - os.environ["SMTP_USERNAME"]
+        - os.environ["SMTP_PASSWORD"]
+        - os.environ["SMTP_SENDER_EMAIL"]
+        """
+        global prisma_client
+
+        data = await request.json()  # type: ignore
+        user_email = data["user_email"]
+        page_params = data["page"]
+        if user_email is None:
+            raise HTTPException(status_code=400, detail="User email is none")
+
+        if prisma_client is None:  # if no db connected, raise an error
+            raise Exception("No connected db.")
+
+        ### Check if user email in user table
+        response = await prisma_client.get_generic_data(
+            key="user_email", value=user_email, table_name="users"
+        )
+        ### if so - generate a 24 hr key with that user id
+        if response is not None:
+            user_id = response.user_id
+            response = await generate_key_helper_fn(
+                **{"duration": "24hr", "models": [], "aliases": {}, "config": {}, "spend": 0, "user_id": user_id}  # type: ignore
+            )
+        else:  ### else - create new user
+            response = await generate_key_helper_fn(
+                **{"duration": "24hr", "models": [], "aliases": {}, "config": {}, "spend": 0, "user_email": user_email}  # type: ignore
+            )
+
+        base_url = os.getenv("LITELLM_HOSTED_UI", "https://dashboard.litellm.ai/")
+
+        params = {
+            "sender_name": "LiteLLM Proxy",
+            "sender_email": os.getenv("SMTP_SENDER_EMAIL"),
+            "receiver_email": user_email,
+            "subject": "Your Magic Link",
+            "html": f"<strong> Follow this  link, to login:\n\n{base_url}user/?token={response['token']}&user_id={response['user_id']}&page={page_params}</strong>",
+        }
+
+        await send_email(**params)
+        return "Email sent!"
+
+
+    @router.get(
+        "/user/info", tags=["user management"], dependencies=[Depends(user_api_key_auth)]
+    )
+    async def user_info(
+        user_id: Optional[str] = fastapi.Query(
+            default=None, description="User ID in the request parameters"
+        ),
+        view_all: bool = fastapi.Query(
+            default=False,
+            description="set to true to View all users. When using view_all, don't pass user_id",
+        ),
+        page: Optional[int] = fastapi.Query(
+            default=0,
+            description="Page number for pagination. Only use when view_all is true",
+        ),
+        page_size: Optional[int] = fastapi.Query(
+            default=25,
+            description="Number of items per page. Only use when view_all is true",
+        ),
+        user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+    ):
+        """
+        Use this to get user information. (user row + all user key info)
+
+        Example request
+        ```
+        curl -X GET 'http://localhost:8000/user/info?user_id=krrish7%40berri.ai' \
+        --header 'Authorization: Bearer sk-1234'
+        ```
+        """
+        global prisma_client
+        try:
+            if prisma_client is None:
+                raise Exception(
+                    f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
+                )
+            ## GET USER ROW ##
+            if user_id is not None:
+                user_info = await prisma_client.get_data(user_id=user_id)
+            elif view_all == True:
+                if page is None:
+                    page = 0
+                if page_size is None:
+                    page_size = 25
+                offset = (page) * page_size  # default is 0
+                limit = page_size  # default is 10
+                user_info = await prisma_client.get_data(
+                    table_name="user", query_type="find_all", offset=offset, limit=limit
+                )
+                return user_info
+            else:
+                user_info = None
+            ## GET ALL TEAMS ##
+            team_list = []
+            team_id_list = []
+            # _DEPRECATED_ check if user in 'member' field
+            teams_1 = await prisma_client.get_data(
+                user_id=user_id, table_name="team", query_type="find_all"
+            )
+
+            if teams_1 is not None and isinstance(teams_1, list):
+                team_list = teams_1
+                for team in teams_1:
+                    team_id_list.append(team.team_id)
+
+            if user_info is not None:
+                # *NEW* get all teams in user 'teams' field
+                teams_2 = await prisma_client.get_data(
+                    team_id_list=user_info.teams, table_name="team", query_type="find_all"
+                )
+
+                if teams_2 is not None and isinstance(teams_2, list):
+                    for team in teams_2:
+                        if team.team_id not in team_id_list:
+                            team_list.append(team)
+                            team_id_list.append(team.team_id)
+            elif user_api_key_dict.user_id is not None:
+                caller_user_info = await prisma_client.get_data(
+                    user_id=user_api_key_dict.user_id
+                )
+                # *NEW* get all teams in user 'teams' field
+                teams_2 = await prisma_client.get_data(
+                    team_id_list=caller_user_info.teams,
+                    table_name="team",
+                    query_type="find_all",
+                )
+
+                if teams_2 is not None and isinstance(teams_2, list):
+                    for team in teams_2:
+                        if team.team_id not in team_id_list:
+                            team_list.append(team)
+                            team_id_list.append(team.team_id)
+
+            ## GET ALL KEYS ##
+            keys = await prisma_client.get_data(
+                user_id=user_id,
+                table_name="key",
+                query_type="find_all",
+                expires=datetime.now(),
+            )
+
+            if user_info is None:
+                ## make sure we still return a total spend ##
+                spend = 0
+                for k in keys:
+                    spend += getattr(k, "spend", 0)
+                user_info = {"spend": spend}
+
+            ## REMOVE HASHED TOKEN INFO before returning ##
+            for key in keys:
+                try:
+                    key = key.model_dump()  # noqa
+                except:
+                    # if using pydantic v1
+                    key = key.dict()
+                key.pop("token", None)
+
+            response_data = {
+                "user_id": user_id,
+                "user_info": user_info,
+                "keys": keys,
+                "teams": team_list,
+            }
+            return response_data
+        except Exception as e:
+            traceback.print_exc()
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
+            raise ProxyException(
+                message="Authentication Error, " + str(e),
+                type="auth_error",
+                param=getattr(e, "param", "None"),
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+    @router.post(
+        "/user/update", tags=["user management"], dependencies=[Depends(user_api_key_auth)]
+    )
+    async def user_update(data: UpdateUserRequest):
+        """
+        [TODO]: Use this to update user budget
+        """
+        global prisma_client
+        try:
+            data_json: dict = data.json()
+            # get the row from db
+            if prisma_client is None:
+                raise Exception("Not connected to DB!")
+
+            # get non default values for key
+            non_default_values = {}
+            for k, v in data_json.items():
+                if v is not None and v not in (
+                    [],
+                    {},
+                    0,
+                ):  # models default to [], spend defaults to 0, we should not reset these values
+                    non_default_values[k] = v
+
+            ## ADD USER, IF NEW ##
+            verbose_proxy_logger.debug(f"/user/update: Received data = {data}")
+            if data.user_id is not None and len(data.user_id) > 0:
+                non_default_values["user_id"] = data.user_id  # type: ignore
+                verbose_proxy_logger.debug(f"In update user, user_id condition block.")
+                response = await prisma_client.update_data(
+                    user_id=data.user_id,
+                    data=non_default_values,
+                    table_name="user",
+                )
+                verbose_proxy_logger.debug(
+                    f"received response from updating prisma client. response={response}"
+                )
+            elif data.user_email is not None:
+                non_default_values["user_id"] = str(uuid.uuid4())
+                non_default_values["user_email"] = data.user_email
+                ## user email is not unique acc. to prisma schema -> future improvement
+                ### for now: check if it exists in db, if not - insert it
+                existing_user_rows = await prisma_client.get_data(
+                    key_val={"user_email": data.user_email},
+                    table_name="user",
+                    query_type="find_all",
+                )
+                if existing_user_rows is None or (
+                    isinstance(existing_user_rows, list) and len(existing_user_rows) == 0
+                ):
+                    response = await prisma_client.insert_data(
+                        data=non_default_values, table_name="user"
+                    )
+                elif isinstance(existing_user_rows, list) and len(existing_user_rows) > 0:
+                    for existing_user in existing_user_rows:
+                        response = await prisma_client.update_data(
+                            user_id=existing_user.user_id,
+                            data=non_default_values,
+                            table_name="user",
+                        )
+            return response
+            # update based on remaining passed in values
+        except Exception as e:
+            traceback.print_exc()
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
+            raise ProxyException(
+                message="Authentication Error, " + str(e),
+                type="auth_error",
+                param=getattr(e, "param", "None"),
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+    @router.post(
+        "/user/request_model",
+        tags=["user management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def user_request_model(request: Request):
+        """
+        Allow a user to create a request to access a model
+        """
+        global prisma_client
+        try:
+            data_json = await request.json()
+
+            # get the row from db
+            if prisma_client is None:
+                raise Exception("Not connected to DB!")
+
+            non_default_values = {k: v for k, v in data_json.items() if v is not None}
+            new_models = non_default_values.get("models", None)
+            user_id = non_default_values.get("user_id", None)
+            justification = non_default_values.get("justification", None)
+
+            response = await prisma_client.insert_data(
+                data={
+                    "models": new_models,
+                    "justification": justification,
+                    "user_id": user_id,
+                    "status": "pending",
+                    "request_id": str(uuid.uuid4()),
+                },
+                table_name="user_notification",
+            )
+            return {"status": "success"}
+            # update based on remaining passed in values
+        except Exception as e:
+            traceback.print_exc()
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
+            raise ProxyException(
+                message="Authentication Error, " + str(e),
+                type="auth_error",
+                param=getattr(e, "param", "None"),
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+    @router.get(
+        "/user/get_requests",
+        tags=["user management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def user_get_requests():
+        """
+        Get all "Access" requests made by proxy users, access requests are requests for accessing models
+        """
+        global prisma_client
+        try:
+
+            # get the row from db
+            if prisma_client is None:
+                raise Exception("Not connected to DB!")
+
+            # TODO: Optimize this so we don't read all the data here, eventually move to pagination
+            response = await prisma_client.get_data(
+                query_type="find_all",
+                table_name="user_notification",
+            )
+            return {"requests": response}
+            # update based on remaining passed in values
+        except Exception as e:
+            traceback.print_exc()
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
+            raise ProxyException(
+                message="Authentication Error, " + str(e),
+                type="auth_error",
+                param=getattr(e, "param", "None"),
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+    @router.post(
+        "/user/block",
+        tags=["user management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def block_user(data: BlockUsers):
+        """
+        [BETA] Reject calls with this user id
+
+        ```
+        curl -X POST "http://0.0.0.0:8000/user/block"
+        -H "Authorization: Bearer sk-1234"
+        -D '{
+        "user_ids": [<user_id>, ...]
+        }'
+        ```
+        """
+        from litellm.proxy.enterprise.enterprise_hooks.blocked_user_list import (
+            _ENTERPRISE_BlockedUserList,
+        )
+
+        if not any(isinstance(x, _ENTERPRISE_BlockedUserList) for x in litellm.callbacks):
+            blocked_user_list = _ENTERPRISE_BlockedUserList()
+            litellm.callbacks.append(blocked_user_list)  # type: ignore
+
+        if litellm.blocked_user_list is None:
+            litellm.blocked_user_list = data.user_ids
+        elif isinstance(litellm.blocked_user_list, list):
+            litellm.blocked_user_list = litellm.blocked_user_list + data.user_ids
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "`blocked_user_list` must be a list or not set. Filepaths can't be updated."
+                },
+            )
+
+        return {"blocked_users": litellm.blocked_user_list}
+
+
+    @router.post(
+        "/user/unblock",
+        tags=["user management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def unblock_user(data: BlockUsers):
+        """
+        [BETA] Unblock calls with this user id
+
+        Example
+        ```
+        curl -X POST "http://0.0.0.0:8000/user/unblock"
+        -H "Authorization: Bearer sk-1234"
+        -D '{
+        "user_ids": [<user_id>, ...]
+        }'
+        ```
+        """
+        from litellm.proxy.enterprise.enterprise_hooks.blocked_user_list import (
+            _ENTERPRISE_BlockedUserList,
+        )
+
+        if (
+            not any(isinstance(x, _ENTERPRISE_BlockedUserList) for x in litellm.callbacks)
+            or litellm.blocked_user_list is None
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "Blocked user check was never set. This call has no effect."
+                },
+            )
+
+        if isinstance(litellm.blocked_user_list, list):
+            for id in data.user_ids:
+                litellm.blocked_user_list.remove(id)
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "`blocked_user_list` must be set as a list. Filepaths can't be updated."
+                },
+            )
+
+        return {"blocked_users": litellm.blocked_user_list}
+
+
+    @router.get(
+        "/user/get_users",
+        tags=["user management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def get_users(
+        role: str = fastapi.Query(
+            default=None,
+            description="Either 'proxy_admin', 'proxy_viewer', 'app_owner', 'app_user'",
+        )
+    ):
+        """
+        [BETA] This could change without notice. Give feedback - https://github.com/BerriAI/litellm/issues
+
+        Get all users who are a specific `user_role`.
+
+        Used by the UI to populate the user lists.
+
+        Currently - admin-only endpoint.
+        """
+        global prisma_client
+
+        if prisma_client is None:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": f"No db connected. prisma client={prisma_client}"},
+            )
+        all_users = await prisma_client.get_data(
+            table_name="user", query_type="find_all", key_val={"user_role": role}
+        )
+
+        return all_users
+
+if enable_extra_admin:
+    #### TEAM MANAGEMENT ####
+
+
+    @router.post(
+        "/team/new",
+        tags=["team management"],
+        dependencies=[Depends(user_api_key_auth)],
+        response_model=LiteLLM_TeamTable,
+    )
+    async def new_team(
+        data: NewTeamRequest,
+        user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+    ):
+        """
+        Allow users to create a new team. Apply user permissions to their team.
+
+        Parameters:
+        - team_alias: Optional[str] - User defined team alias
+        - team_id: Optional[str] - The team id of the user. If none passed, we'll generate it.
+        - members_with_roles: list - A list of dictionaries, mapping user_id to role in team (either 'admin' or 'user')
+        - metadata: Optional[dict] - Metadata for team, store information for team. Example metadata = {"team": "core-infra", "app": "app2", "email": "ishaan@berri.ai" }
+
+        Returns:
+        - team_id: (str) Unique team id - used for tracking spend across multiple keys for same team id.
+
+        _deprecated_params: 
+        - admins: list - A list of user_id's for the admin role 
+        - users: list - A list of user_id's for the user role 
+
+        Example Request:
+        ```
+        curl --location 'http://0.0.0.0:8000/team/new' \
+        
+        --header 'Authorization: Bearer sk-1234' \
+        
+        --header 'Content-Type: application/json' \
+        
+        --data '{
+        "team_alias": "my-new-team_2",
+        "members_with_roles": [{"role": "admin", "user_id": "user-1234"}, 
+            {"role": "user", "user_id": "user-2434"}]
+        }'
+
+        ```
+        """
+        global prisma_client
+
+        if prisma_client is None:
+            raise HTTPException(status_code=500, detail={"error": "No db connected"})
+
+        if data.team_id is None:
+            data.team_id = str(uuid.uuid4())
+
+        if (
+            user_api_key_dict.user_role is None
+            or user_api_key_dict.user_role != "proxy_admin"
+        ):  # don't restrict proxy admin
+            if (
+                data.tpm_limit is not None
+                and user_api_key_dict.tpm_limit is not None
+                and data.tpm_limit > user_api_key_dict.tpm_limit
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": f"tpm limit higher than user max. User tpm limit={user_api_key_dict.tpm_limit}"
+                    },
+                )
+
+            if (
+                data.rpm_limit is not None
+                and user_api_key_dict.rpm_limit is not None
+                and data.rpm_limit > user_api_key_dict.rpm_limit
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": f"rpm limit higher than user max. User rpm limit={user_api_key_dict.rpm_limit}"
+                    },
+                )
+
+            if (
+                data.max_budget is not None
+                and user_api_key_dict.max_budget is not None
+                and data.max_budget > user_api_key_dict.max_budget
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": f"max budget higher than user max. User max budget={user_api_key_dict.max_budget}"
+                    },
+                )
+
+            if data.models is not None:
+                for m in data.models:
+                    if m not in user_api_key_dict.models:
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": f"Model not in allowed user models. User allowed models={user_api_key_dict.models}"
+                            },
+                        )
+
+        if user_api_key_dict.user_id is not None:
+            creating_user_in_list = False
+            for member in data.members_with_roles:
+                if member.user_id == user_api_key_dict.user_id:
+                    creating_user_in_list = True
+
+            if creating_user_in_list == False:
+                data.members_with_roles.append(
+                    Member(role="admin", user_id=user_api_key_dict.user_id)
+                )
+
+        ## ADD TO MODEL TABLE
+        _model_id = None
+        if data.model_aliases is not None and isinstance(data.model_aliases, dict):
+            litellm_modeltable = LiteLLM_ModelTable(
+                model_aliases=json.dumps(data.model_aliases),
+                created_by=user_api_key_dict.user_id or litellm_proxy_admin_name,
+                updated_by=user_api_key_dict.user_id or litellm_proxy_admin_name,
+            )
+            model_dict = await prisma_client.db.litellm_modeltable.create(
+                {**litellm_modeltable.json(exclude_none=True)}  # type: ignore
+            )  # type: ignore
+
+            _model_id = model_dict.id
+
+        ## ADD TO TEAM TABLE
+        complete_team_data = LiteLLM_TeamTable(
+            **data.json(),
+            max_parallel_requests=user_api_key_dict.max_parallel_requests,
+            budget_duration=user_api_key_dict.budget_duration,
+            budget_reset_at=user_api_key_dict.budget_reset_at,
+            model_id=_model_id,
+        )
+
+        team_row = await prisma_client.insert_data(
+            data=complete_team_data.json(exclude_none=True), table_name="team"
+        )
+
+        ## ADD TEAM ID TO USER TABLE ##
+        for user in complete_team_data.members_with_roles:
+            ## add team id to user row ##
+            await prisma_client.update_data(
+                user_id=user.user_id,
+                data={"user_id": user.user_id, "teams": [team_row.team_id]},
+                update_key_values_custom_query={
+                    "teams": {
+                        "push ": [team_row.team_id],
+                    }
+                },
+            )
+        return team_row.model_dump()
+
+
+    @router.post(
+        "/team/update", tags=["team management"], dependencies=[Depends(user_api_key_auth)]
+    )
+    async def update_team(
+        data: UpdateTeamRequest,
+        user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+    ):
+        """
+        [BETA]
+        [RECOMMENDED] - use `/team/member_add` to add new team members instead 
+
+        You can now update team budget / rate limits via /team/update
+
+        ```
+        curl --location 'http://0.0.0.0:8000/team/update' \
+        
+        --header 'Authorization: Bearer sk-1234' \
+            
+        --header 'Content-Type: application/json' \
+        
+        --data-raw '{
+            "team_id": "45e3e396-ee08-4a61-a88e-16b3ce7e0849",
+            "members_with_roles": [{"role": "admin", "user_id": "5c4a0aa3-a1e1-43dc-bd87-3c2da8382a3a"}, {"role": "user", "user_id": "krrish247652@berri.ai"}]
+        }'
+        ```
+        """
+        global prisma_client
+
+        if prisma_client is None:
+            raise HTTPException(status_code=500, detail={"error": "No db connected"})
+
+        if data.team_id is None:
+            raise HTTPException(status_code=400, detail={"error": "No team id passed in"})
+
+        existing_team_row = await prisma_client.get_data(
+            team_id=data.team_id, table_name="team", query_type="find_unique"
+        )
+
+        updated_kv = data.json(exclude_none=True)
+        team_row = await prisma_client.update_data(
+            update_key_values=updated_kv,
+            data=updated_kv,
+            table_name="team",
+            team_id=data.team_id,
+        )
+
+        ## ADD NEW USERS ##
+        existing_user_id_list = []
+        ## Get new users
+        for user in existing_team_row.members_with_roles:
+            if user["user_id"] is not None:
+                existing_user_id_list.append(user["user_id"])
+
+        ## Update new user rows with team id (info used by /user/info to show all teams, user is a part of)
+        if data.members_with_roles is not None:
+            for user in data.members_with_roles:
+                if user.user_id not in existing_user_id_list:
+                    await prisma_client.update_data(
+                        user_id=user.user_id,
+                        data={
+                            "user_id": user.user_id,
+                            "teams": [team_row["team_id"]],
+                            "models": team_row["data"].models,
+                        },
+                        update_key_values_custom_query={
+                            "teams": {
+                                "push": [team_row["team_id"]],
+                            }
+                        },
+                        table_name="user",
+                    )
+
+        ## REMOVE DELETED USERS ##
+        ### Get list of deleted users (old list - new list)
+        deleted_user_id_list = []
+        new_user_id_list = []
+        ## Get old user list
+        if data.members_with_roles is not None:
+            for user in data.members_with_roles:
+                new_user_id_list.append(user.user_id)
+        ## Get diff
+        if existing_team_row.members_with_roles is not None:
+            for user in existing_team_row.members_with_roles:
+                if user["user_id"] not in new_user_id_list:
+                    deleted_user_id_list.append(user["user_id"])
+
+        ## SET UPDATED LIST
+        if len(deleted_user_id_list) > 0:
+            # get the deleted users
+            existing_user_rows = await prisma_client.get_data(
+                user_id_list=deleted_user_id_list, table_name="user", query_type="find_all"
+            )
+            for user in existing_user_rows:
+                if data.team_id in user["teams"]:
+                    user["teams"].remove(data.team_id)
+                await prisma_client.update_data(
+                    user_id=user["user_id"],
+                    data=user,
+                    update_key_values={"user_id": user["user_id"], "teams": user["teams"]},
+                )
+        return team_row
+
+
+    @router.post(
+        "/team/member_add",
+        tags=["team management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def team_member_add(
+        data: TeamMemberAddRequest,
+        user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+    ):
+        """ 
+        [BETA]
+
+        Add new members (either via user_email or user_id) to a team
+
+        If user doesn't exist, new user row will also be added to User Table
+
+        ```
+        curl -X POST 'http://0.0.0.0:8000/team/update' \
+        
+        -H 'Authorization: Bearer sk-1234' \
+            
+        -H 'Content-Type: application/json' \
+        
+        -D '{
+            "team_id": "45e3e396-ee08-4a61-a88e-16b3ce7e0849",
+            "member": {"role": "user", "user_id": "krrish247652@berri.ai"}
+        }'
+        ```
+        """
+        if prisma_client is None:
+            raise HTTPException(status_code=500, detail={"error": "No db connected"})
+
+        if data.team_id is None:
+            raise HTTPException(status_code=400, detail={"error": "No team id passed in"})
+
+        if data.member is None:
+            raise HTTPException(status_code=400, detail={"error": "No member passed in"})
+
+        existing_team_row = await prisma_client.get_data(  # type: ignore
+            team_id=data.team_id, table_name="team", query_type="find_unique"
+        )
+
+        new_member = data.member
+
+        existing_team_row.members_with_roles.append(new_member)
+
+        complete_team_data = LiteLLM_TeamTable(
+            **existing_team_row.model_dump(),
+        )
+
+        team_row = await prisma_client.update_data(
+            update_key_values=complete_team_data.json(exclude_none=True),
+            data=complete_team_data.json(exclude_none=True),
+            table_name="team",
+            team_id=data.team_id,
+        )
 
         ## ADD USER, IF NEW ##
-        verbose_proxy_logger.debug(f"/user/update: Received data = {data}")
-        if data.user_id is not None and len(data.user_id) > 0:
-            non_default_values["user_id"] = data.user_id  # type: ignore
-            verbose_proxy_logger.debug(f"In update user, user_id condition block.")
-            response = await prisma_client.update_data(
-                user_id=data.user_id,
-                data=non_default_values,
+        user_data = {  # type: ignore
+            "teams": [team_row["team_id"]],
+            "models": team_row["data"].models,
+        }
+        if new_member.user_id is not None:
+            user_data["user_id"] = new_member.user_id  # type: ignore
+            await prisma_client.update_data(
+                user_id=new_member.user_id,
+                data=user_data,
+                update_key_values_custom_query={
+                    "teams": {
+                        "push": [team_row["team_id"]],
+                    }
+                },
                 table_name="user",
             )
-            verbose_proxy_logger.debug(
-                f"received response from updating prisma client. response={response}"
-            )
-        elif data.user_email is not None:
-            non_default_values["user_id"] = str(uuid.uuid4())
-            non_default_values["user_email"] = data.user_email
+        elif new_member.user_email is not None:
+            user_data["user_id"] = str(uuid.uuid4())
+            user_data["user_email"] = new_member.user_email
             ## user email is not unique acc. to prisma schema -> future improvement
             ### for now: check if it exists in db, if not - insert it
-            existing_user_rows = await prisma_client.get_data(
-                key_val={"user_email": data.user_email},
+            existing_user_row = await prisma_client.get_data(
+                key_val={"user_email": new_member.user_email},
                 table_name="user",
                 query_type="find_all",
             )
-            if existing_user_rows is None or (
-                isinstance(existing_user_rows, list) and len(existing_user_rows) == 0
+            if existing_user_row is None or (
+                isinstance(existing_user_row, list) and len(existing_user_row) == 0
             ):
-                response = await prisma_client.insert_data(
-                    data=non_default_values, table_name="user"
-                )
-            elif isinstance(existing_user_rows, list) and len(existing_user_rows) > 0:
-                for existing_user in existing_user_rows:
-                    response = await prisma_client.update_data(
+
+                await prisma_client.insert_data(data=user_data, table_name="user")
+
+        return team_row
+
+
+    @router.post(
+        "/team/member_delete",
+        tags=["team management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def team_member_delete(
+        data: TeamMemberDeleteRequest,
+        user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+    ):
+        """ 
+        [BETA]
+
+        delete members (either via user_email or user_id) from a team
+
+        If user doesn't exist, an exception will be raised
+        ```
+        curl -X POST 'http://0.0.0.0:8000/team/update' \
+        
+        -H 'Authorization: Bearer sk-1234' \
+            
+        -H 'Content-Type: application/json' \
+        
+        -D '{
+            "team_id": "45e3e396-ee08-4a61-a88e-16b3ce7e0849",
+            "member": {"role": "user", "user_id": "krrish247652@berri.ai"}
+        }'
+        ```
+        """
+        if prisma_client is None:
+            raise HTTPException(status_code=500, detail={"error": "No db connected"})
+
+        if data.team_id is None:
+            raise HTTPException(status_code=400, detail={"error": "No team id passed in"})
+
+        if data.user_id is None and data.user_email is None:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "Either user_id or user_email needs to be passed in"},
+            )
+
+        existing_team_row = await prisma_client.get_data(  # type: ignore
+            team_id=data.team_id, table_name="team", query_type="find_unique"
+        )
+
+        ## DELETE MEMBER FROM TEAM
+        new_team_members = []
+        for m in existing_team_row.members_with_roles:
+            if (
+                data.user_id is not None
+                and m["user_id"] is not None
+                and data.user_id == m["user_id"]
+            ):
+                continue
+            elif (
+                data.user_email is not None
+                and m["user_email"] is not None
+                and data.user_email == m["user_email"]
+            ):
+                continue
+            new_team_members.append(m)
+        existing_team_row.members_with_roles = new_team_members
+        complete_team_data = LiteLLM_TeamTable(
+            **existing_team_row.model_dump(),
+        )
+
+        team_row = await prisma_client.update_data(
+            update_key_values=complete_team_data.json(exclude_none=True),
+            data=complete_team_data.json(exclude_none=True),
+            table_name="team",
+            team_id=data.team_id,
+        )
+
+        ## DELETE TEAM ID from USER ROW, IF EXISTS ##
+        # get user row
+        key_val = {}
+        if data.user_id is not None:
+            key_val["user_id"] = data.user_id
+        elif data.user_email is not None:
+            key_val["user_email"] = data.user_email
+        existing_user_rows = await prisma_client.get_data(
+            key_val=key_val,
+            table_name="user",
+            query_type="find_all",
+        )
+        user_data = {  # type: ignore
+            "teams": [],
+            "models": team_row["data"].models,
+        }
+        if existing_user_rows is not None and (
+            isinstance(existing_user_rows, list) and len(existing_user_rows) > 0
+        ):
+            for existing_user in existing_user_rows:
+                team_list = []
+                if hasattr(existing_user, "teams"):
+                    team_list = existing_user.teams
+                    team_list.remove(data.team_id)
+                    user_data["user_id"] = existing_user.user_id
+                    await prisma_client.update_data(
                         user_id=existing_user.user_id,
-                        data=non_default_values,
+                        data=user_data,
+                        update_key_values_custom_query={
+                            "teams": {
+                                "set": [team_row["team_id"]],
+                            }
+                        },
                         table_name="user",
                     )
-        return response
-        # update based on remaining passed in values
-    except Exception as e:
-        traceback.print_exc()
-        if isinstance(e, HTTPException):
-            raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
-                type="auth_error",
-                param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
-            )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
+
+        return team_row["data"]
 
 
-@router.post(
-    "/user/request_model",
-    tags=["user management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def user_request_model(request: Request):
-    """
-    Allow a user to create a request to access a model
-    """
-    global prisma_client
-    try:
-        data_json = await request.json()
-
-        # get the row from db
-        if prisma_client is None:
-            raise Exception("Not connected to DB!")
-
-        non_default_values = {k: v for k, v in data_json.items() if v is not None}
-        new_models = non_default_values.get("models", None)
-        user_id = non_default_values.get("user_id", None)
-        justification = non_default_values.get("justification", None)
-
-        response = await prisma_client.insert_data(
-            data={
-                "models": new_models,
-                "justification": justification,
-                "user_id": user_id,
-                "status": "pending",
-                "request_id": str(uuid.uuid4()),
-            },
-            table_name="user_notification",
-        )
-        return {"status": "success"}
-        # update based on remaining passed in values
-    except Exception as e:
-        traceback.print_exc()
-        if isinstance(e, HTTPException):
-            raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
-                type="auth_error",
-                param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
-            )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
-
-
-@router.get(
-    "/user/get_requests",
-    tags=["user management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def user_get_requests():
-    """
-    Get all "Access" requests made by proxy users, access requests are requests for accessing models
-    """
-    global prisma_client
-    try:
-
-        # get the row from db
-        if prisma_client is None:
-            raise Exception("Not connected to DB!")
-
-        # TODO: Optimize this so we don't read all the data here, eventually move to pagination
-        response = await prisma_client.get_data(
-            query_type="find_all",
-            table_name="user_notification",
-        )
-        return {"requests": response}
-        # update based on remaining passed in values
-    except Exception as e:
-        traceback.print_exc()
-        if isinstance(e, HTTPException):
-            raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
-                type="auth_error",
-                param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
-            )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
-
-
-@router.post(
-    "/user/block",
-    tags=["user management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def block_user(data: BlockUsers):
-    """
-    [BETA] Reject calls with this user id
-
-    ```
-    curl -X POST "http://0.0.0.0:8000/user/block"
-    -H "Authorization: Bearer sk-1234"
-    -D '{
-    "user_ids": [<user_id>, ...]
-    }'
-    ```
-    """
-    from litellm.proxy.enterprise.enterprise_hooks.blocked_user_list import (
-        _ENTERPRISE_BlockedUserList,
+    @router.post(
+        "/team/delete", tags=["team management"], dependencies=[Depends(user_api_key_auth)]
     )
-
-    if not any(isinstance(x, _ENTERPRISE_BlockedUserList) for x in litellm.callbacks):
-        blocked_user_list = _ENTERPRISE_BlockedUserList()
-        litellm.callbacks.append(blocked_user_list)  # type: ignore
-
-    if litellm.blocked_user_list is None:
-        litellm.blocked_user_list = data.user_ids
-    elif isinstance(litellm.blocked_user_list, list):
-        litellm.blocked_user_list = litellm.blocked_user_list + data.user_ids
-    else:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "`blocked_user_list` must be a list or not set. Filepaths can't be updated."
-            },
-        )
-
-    return {"blocked_users": litellm.blocked_user_list}
-
-
-@router.post(
-    "/user/unblock",
-    tags=["user management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def unblock_user(data: BlockUsers):
-    """
-    [BETA] Unblock calls with this user id
-
-    Example
-    ```
-    curl -X POST "http://0.0.0.0:8000/user/unblock"
-    -H "Authorization: Bearer sk-1234"
-    -D '{
-    "user_ids": [<user_id>, ...]
-    }'
-    ```
-    """
-    from litellm.proxy.enterprise.enterprise_hooks.blocked_user_list import (
-        _ENTERPRISE_BlockedUserList,
-    )
-
-    if (
-        not any(isinstance(x, _ENTERPRISE_BlockedUserList) for x in litellm.callbacks)
-        or litellm.blocked_user_list is None
+    async def delete_team(
+        data: DeleteTeamRequest,
+        user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
     ):
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Blocked user check was never set. This call has no effect."
-            },
-        )
+        """
+        delete team and associated team keys
 
-    if isinstance(litellm.blocked_user_list, list):
-        for id in data.user_ids:
-            litellm.blocked_user_list.remove(id)
-    else:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "`blocked_user_list` must be set as a list. Filepaths can't be updated."
-            },
-        )
+        ```
+        curl --location 'http://0.0.0.0:8000/team/delete' \
+            
+        --header 'Authorization: Bearer sk-1234' \
+            
+        --header 'Content-Type: application/json' \
+        
+        --data-raw '{
+            "team_ids": ["45e3e396-ee08-4a61-a88e-16b3ce7e0849"]
+        }'
+        ```
+        """
+        global prisma_client
 
-    return {"blocked_users": litellm.blocked_user_list}
+        if prisma_client is None:
+            raise HTTPException(status_code=500, detail={"error": "No db connected"})
+
+        if data.team_ids is None:
+            raise HTTPException(status_code=400, detail={"error": "No team id passed in"})
+
+        ## DELETE ASSOCIATED KEYS
+        await prisma_client.delete_data(team_id_list=data.team_ids, table_name="key")
+        ## DELETE TEAMS
+        await prisma_client.delete_data(team_id_list=data.team_ids, table_name="team")
 
 
-@router.get(
-    "/user/get_users",
-    tags=["user management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def get_users(
-    role: str = fastapi.Query(
-        default=None,
-        description="Either 'proxy_admin', 'proxy_viewer', 'app_owner', 'app_user'",
+    @router.get(
+        "/team/info", tags=["team management"], dependencies=[Depends(user_api_key_auth)]
     )
-):
-    """
-    [BETA] This could change without notice. Give feedback - https://github.com/BerriAI/litellm/issues
-
-    Get all users who are a specific `user_role`.
-
-    Used by the UI to populate the user lists.
-
-    Currently - admin-only endpoint.
-    """
-    global prisma_client
-
-    if prisma_client is None:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": f"No db connected. prisma client={prisma_client}"},
+    async def team_info(
+        team_id: str = fastapi.Query(
+            default=None, description="Team ID in the request parameters"
         )
-    all_users = await prisma_client.get_data(
-        table_name="user", query_type="find_all", key_val={"user_role": role}
+    ):
+        """
+        get info on team + related keys
+
+        ```
+        curl --location 'http://localhost:4000/team/info' \
+        --header 'Authorization: Bearer sk-1234' \
+        --header 'Content-Type: application/json' \
+        --data '{
+            "teams": ["<team-id>",..]
+        }'
+        ```
+        """
+        global prisma_client
+        try:
+            if prisma_client is None:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "error": f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
+                    },
+                )
+            if team_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"message": "Malformed request. No team id passed in."},
+                )
+
+            team_info = await prisma_client.get_data(
+                team_id=team_id, table_name="team", query_type="find_unique"
+            )
+            ## GET ALL KEYS ##
+            keys = await prisma_client.get_data(
+                team_id=team_id,
+                table_name="key",
+                query_type="find_all",
+                expires=datetime.now(),
+            )
+
+            if team_info is None:
+                ## make sure we still return a total spend ##
+                spend = 0
+                for k in keys:
+                    spend += getattr(k, "spend", 0)
+                team_info = {"spend": spend}
+
+            ## REMOVE HASHED TOKEN INFO before returning ##
+            for key in keys:
+                try:
+                    key = key.model_dump()  # noqa
+                except:
+                    # if using pydantic v1
+                    key = key.dict()
+                key.pop("token", None)
+            return {"team_id": team_id, "team_info": team_info, "keys": keys}
+
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
+            raise ProxyException(
+                message="Authentication Error, " + str(e),
+                type="auth_error",
+                param=getattr(e, "param", "None"),
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+
+if enable_extra_admin:
+    #### ORGANIZATION MANAGEMENT ####
+
+
+    @router.post(
+        "/organization/new",
+        tags=["organization management"],
+        dependencies=[Depends(user_api_key_auth)],
+        response_model=NewOrganizationResponse,
     )
+    async def new_organization(
+        data: NewOrganizationRequest,
+        user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+    ):
+        """
+        Allow orgs to own teams
 
-    return all_users
+        Set org level budgets + model access.
+
+        Only admins can create orgs.
+
+        # Parameters 
+
+        - `organization_alias`: *str* = The name of the organization.
+        - `models`: *List* = The models the organization has access to.
+        - `budget_id`: *Optional[str]* = The id for a budget (tpm/rpm/max budget) for the organization. 
+        ### IF NO BUDGET ID - CREATE ONE WITH THESE PARAMS ### 
+        - `max_budget`: *Optional[float]* = Max budget for org
+        - `tpm_limit`: *Optional[int]* = Max tpm limit for org
+        - `rpm_limit`: *Optional[int]* = Max rpm limit for org
+        - `model_max_budget`: *Optional[dict]* = Max budget for a specific model
+        - `budget_duration`: *Optional[str]* = Frequency of reseting org budget
+
+        Case 1: Create new org **without** a budget_id 
+
+        ```bash
+        curl --location 'http://0.0.0.0:4000/organization/new' \
+        
+        --header 'Authorization: Bearer sk-1234' \
+        
+        --header 'Content-Type: application/json' \
+        
+        --data '{
+            "organization_alias": "my-secret-org",
+            "models": ["model1", "model2"],
+            "max_budget": 100
+        }'
 
 
-#### TEAM MANAGEMENT ####
+        ```
 
+        Case 2: Create new org **with** a budget_id 
 
-@router.post(
-    "/team/new",
-    tags=["team management"],
-    dependencies=[Depends(user_api_key_auth)],
-    response_model=LiteLLM_TeamTable,
-)
-async def new_team(
-    data: NewTeamRequest,
-    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
-):
-    """
-    Allow users to create a new team. Apply user permissions to their team.
+        ```bash
+        curl --location 'http://0.0.0.0:4000/organization/new' \
+        
+        --header 'Authorization: Bearer sk-1234' \
+        
+        --header 'Content-Type: application/json' \
+        
+        --data '{
+            "organization_alias": "my-secret-org",
+            "models": ["model1", "model2"],
+            "budget_id": "428eeaa8-f3ac-4e85-a8fb-7dc8d7aa8689"
+        }'
+        ```
+        """
+        global prisma_client
 
-    Parameters:
-    - team_alias: Optional[str] - User defined team alias
-    - team_id: Optional[str] - The team id of the user. If none passed, we'll generate it.
-    - members_with_roles: list - A list of dictionaries, mapping user_id to role in team (either 'admin' or 'user')
-    - metadata: Optional[dict] - Metadata for team, store information for team. Example metadata = {"team": "core-infra", "app": "app2", "email": "ishaan@berri.ai" }
+        if prisma_client is None:
+            raise HTTPException(status_code=500, detail={"error": "No db connected"})
 
-    Returns:
-    - team_id: (str) Unique team id - used for tracking spend across multiple keys for same team id.
-
-    _deprecated_params: 
-    - admins: list - A list of user_id's for the admin role 
-    - users: list - A list of user_id's for the user role 
-
-    Example Request:
-    ```
-    curl --location 'http://0.0.0.0:8000/team/new' \
-    
-    --header 'Authorization: Bearer sk-1234' \
-    
-    --header 'Content-Type: application/json' \
-    
-    --data '{
-      "team_alias": "my-new-team_2",
-      "members_with_roles": [{"role": "admin", "user_id": "user-1234"}, 
-        {"role": "user", "user_id": "user-2434"}]
-    }'
-
-    ```
-    """
-    global prisma_client
-
-    if prisma_client is None:
-        raise HTTPException(status_code=500, detail={"error": "No db connected"})
-
-    if data.team_id is None:
-        data.team_id = str(uuid.uuid4())
-
-    if (
-        user_api_key_dict.user_role is None
-        or user_api_key_dict.user_role != "proxy_admin"
-    ):  # don't restrict proxy admin
         if (
-            data.tpm_limit is not None
-            and user_api_key_dict.tpm_limit is not None
-            and data.tpm_limit > user_api_key_dict.tpm_limit
+            user_api_key_dict.user_role is None
+            or user_api_key_dict.user_role != "proxy_admin"
         ):
             raise HTTPException(
-                status_code=400,
+                status_code=401,
                 detail={
-                    "error": f"tpm limit higher than user max. User tpm limit={user_api_key_dict.tpm_limit}"
+                    "error": f"Only admins can create orgs. Your role is = {user_api_key_dict.user_role}"
                 },
             )
 
-        if (
-            data.rpm_limit is not None
-            and user_api_key_dict.rpm_limit is not None
-            and data.rpm_limit > user_api_key_dict.rpm_limit
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": f"rpm limit higher than user max. User rpm limit={user_api_key_dict.rpm_limit}"
-                },
-            )
+        if data.budget_id is None:
+            """
+            Every organization needs a budget attached.
 
-        if (
-            data.max_budget is not None
-            and user_api_key_dict.max_budget is not None
-            and data.max_budget > user_api_key_dict.max_budget
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": f"max budget higher than user max. User max budget={user_api_key_dict.max_budget}"
-                },
-            )
+            If none provided, create one based on provided values
+            """
+            budget_row = LiteLLM_BudgetTable(**data.json(exclude_none=True))
 
-        if data.models is not None:
+            new_budget = prisma_client.jsonify_object(budget_row.json(exclude_none=True))
+
+            _budget = await prisma_client.db.litellm_budgettable.create(
+                data={
+                    **new_budget,  # type: ignore
+                    "created_by": user_api_key_dict.user_id or litellm_proxy_admin_name,
+                    "updated_by": user_api_key_dict.user_id or litellm_proxy_admin_name,
+                }
+            )  # type: ignore
+
+            data.budget_id = _budget.budget_id
+
+        """
+        Ensure only models that user has access to, are given to org
+        """
+        if len(user_api_key_dict.models) == 0:  # user has access to all models
+            pass
+        else:
+            if len(data.models) == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": f"User not allowed to give access to all models. Select models you want org to have access to."
+                    },
+                )
             for m in data.models:
                 if m not in user_api_key_dict.models:
                     raise HTTPException(
                         status_code=400,
                         detail={
-                            "error": f"Model not in allowed user models. User allowed models={user_api_key_dict.models}"
+                            "error": f"User not allowed to give access to model={m}. Models you have access to = {user_api_key_dict.models}"
                         },
                     )
-
-    if user_api_key_dict.user_id is not None:
-        creating_user_in_list = False
-        for member in data.members_with_roles:
-            if member.user_id == user_api_key_dict.user_id:
-                creating_user_in_list = True
-
-        if creating_user_in_list == False:
-            data.members_with_roles.append(
-                Member(role="admin", user_id=user_api_key_dict.user_id)
-            )
-
-    ## ADD TO MODEL TABLE
-    _model_id = None
-    if data.model_aliases is not None and isinstance(data.model_aliases, dict):
-        litellm_modeltable = LiteLLM_ModelTable(
-            model_aliases=json.dumps(data.model_aliases),
+        organization_row = LiteLLM_OrganizationTable(
+            **data.json(exclude_none=True),
             created_by=user_api_key_dict.user_id or litellm_proxy_admin_name,
             updated_by=user_api_key_dict.user_id or litellm_proxy_admin_name,
         )
-        model_dict = await prisma_client.db.litellm_modeltable.create(
-            {**litellm_modeltable.json(exclude_none=True)}  # type: ignore
-        )  # type: ignore
-
-        _model_id = model_dict.id
-
-    ## ADD TO TEAM TABLE
-    complete_team_data = LiteLLM_TeamTable(
-        **data.json(),
-        max_parallel_requests=user_api_key_dict.max_parallel_requests,
-        budget_duration=user_api_key_dict.budget_duration,
-        budget_reset_at=user_api_key_dict.budget_reset_at,
-        model_id=_model_id,
-    )
-
-    team_row = await prisma_client.insert_data(
-        data=complete_team_data.json(exclude_none=True), table_name="team"
-    )
-
-    ## ADD TEAM ID TO USER TABLE ##
-    for user in complete_team_data.members_with_roles:
-        ## add team id to user row ##
-        await prisma_client.update_data(
-            user_id=user.user_id,
-            data={"user_id": user.user_id, "teams": [team_row.team_id]},
-            update_key_values_custom_query={
-                "teams": {
-                    "push ": [team_row.team_id],
-                }
-            },
+        new_organization_row = prisma_client.jsonify_object(
+            organization_row.json(exclude_none=True)
         )
-    return team_row.model_dump()
-
-
-@router.post(
-    "/team/update", tags=["team management"], dependencies=[Depends(user_api_key_auth)]
-)
-async def update_team(
-    data: UpdateTeamRequest,
-    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
-):
-    """
-    [BETA]
-    [RECOMMENDED] - use `/team/member_add` to add new team members instead 
-
-    You can now update team budget / rate limits via /team/update
-
-    ```
-    curl --location 'http://0.0.0.0:8000/team/update' \
-    
-    --header 'Authorization: Bearer sk-1234' \
-        
-    --header 'Content-Type: application/json' \
-    
-    --data-raw '{
-        "team_id": "45e3e396-ee08-4a61-a88e-16b3ce7e0849",
-        "members_with_roles": [{"role": "admin", "user_id": "5c4a0aa3-a1e1-43dc-bd87-3c2da8382a3a"}, {"role": "user", "user_id": "krrish247652@berri.ai"}]
-    }'
-    ```
-    """
-    global prisma_client
-
-    if prisma_client is None:
-        raise HTTPException(status_code=500, detail={"error": "No db connected"})
-
-    if data.team_id is None:
-        raise HTTPException(status_code=400, detail={"error": "No team id passed in"})
-
-    existing_team_row = await prisma_client.get_data(
-        team_id=data.team_id, table_name="team", query_type="find_unique"
-    )
-
-    updated_kv = data.json(exclude_none=True)
-    team_row = await prisma_client.update_data(
-        update_key_values=updated_kv,
-        data=updated_kv,
-        table_name="team",
-        team_id=data.team_id,
-    )
-
-    ## ADD NEW USERS ##
-    existing_user_id_list = []
-    ## Get new users
-    for user in existing_team_row.members_with_roles:
-        if user["user_id"] is not None:
-            existing_user_id_list.append(user["user_id"])
-
-    ## Update new user rows with team id (info used by /user/info to show all teams, user is a part of)
-    if data.members_with_roles is not None:
-        for user in data.members_with_roles:
-            if user.user_id not in existing_user_id_list:
-                await prisma_client.update_data(
-                    user_id=user.user_id,
-                    data={
-                        "user_id": user.user_id,
-                        "teams": [team_row["team_id"]],
-                        "models": team_row["data"].models,
-                    },
-                    update_key_values_custom_query={
-                        "teams": {
-                            "push": [team_row["team_id"]],
-                        }
-                    },
-                    table_name="user",
-                )
-
-    ## REMOVE DELETED USERS ##
-    ### Get list of deleted users (old list - new list)
-    deleted_user_id_list = []
-    new_user_id_list = []
-    ## Get old user list
-    if data.members_with_roles is not None:
-        for user in data.members_with_roles:
-            new_user_id_list.append(user.user_id)
-    ## Get diff
-    if existing_team_row.members_with_roles is not None:
-        for user in existing_team_row.members_with_roles:
-            if user["user_id"] not in new_user_id_list:
-                deleted_user_id_list.append(user["user_id"])
-
-    ## SET UPDATED LIST
-    if len(deleted_user_id_list) > 0:
-        # get the deleted users
-        existing_user_rows = await prisma_client.get_data(
-            user_id_list=deleted_user_id_list, table_name="user", query_type="find_all"
-        )
-        for user in existing_user_rows:
-            if data.team_id in user["teams"]:
-                user["teams"].remove(data.team_id)
-            await prisma_client.update_data(
-                user_id=user["user_id"],
-                data=user,
-                update_key_values={"user_id": user["user_id"], "teams": user["teams"]},
-            )
-    return team_row
-
-
-@router.post(
-    "/team/member_add",
-    tags=["team management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def team_member_add(
-    data: TeamMemberAddRequest,
-    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
-):
-    """ 
-    [BETA]
-
-    Add new members (either via user_email or user_id) to a team
-
-    If user doesn't exist, new user row will also be added to User Table
-
-    ```
-    curl -X POST 'http://0.0.0.0:8000/team/update' \
-    
-    -H 'Authorization: Bearer sk-1234' \
-        
-    -H 'Content-Type: application/json' \
-    
-    -D '{
-        "team_id": "45e3e396-ee08-4a61-a88e-16b3ce7e0849",
-        "member": {"role": "user", "user_id": "krrish247652@berri.ai"}
-    }'
-    ```
-    """
-    if prisma_client is None:
-        raise HTTPException(status_code=500, detail={"error": "No db connected"})
-
-    if data.team_id is None:
-        raise HTTPException(status_code=400, detail={"error": "No team id passed in"})
-
-    if data.member is None:
-        raise HTTPException(status_code=400, detail={"error": "No member passed in"})
-
-    existing_team_row = await prisma_client.get_data(  # type: ignore
-        team_id=data.team_id, table_name="team", query_type="find_unique"
-    )
-
-    new_member = data.member
-
-    existing_team_row.members_with_roles.append(new_member)
-
-    complete_team_data = LiteLLM_TeamTable(
-        **existing_team_row.model_dump(),
-    )
-
-    team_row = await prisma_client.update_data(
-        update_key_values=complete_team_data.json(exclude_none=True),
-        data=complete_team_data.json(exclude_none=True),
-        table_name="team",
-        team_id=data.team_id,
-    )
-
-    ## ADD USER, IF NEW ##
-    user_data = {  # type: ignore
-        "teams": [team_row["team_id"]],
-        "models": team_row["data"].models,
-    }
-    if new_member.user_id is not None:
-        user_data["user_id"] = new_member.user_id  # type: ignore
-        await prisma_client.update_data(
-            user_id=new_member.user_id,
-            data=user_data,
-            update_key_values_custom_query={
-                "teams": {
-                    "push": [team_row["team_id"]],
-                }
-            },
-            table_name="user",
-        )
-    elif new_member.user_email is not None:
-        user_data["user_id"] = str(uuid.uuid4())
-        user_data["user_email"] = new_member.user_email
-        ## user email is not unique acc. to prisma schema -> future improvement
-        ### for now: check if it exists in db, if not - insert it
-        existing_user_row = await prisma_client.get_data(
-            key_val={"user_email": new_member.user_email},
-            table_name="user",
-            query_type="find_all",
-        )
-        if existing_user_row is None or (
-            isinstance(existing_user_row, list) and len(existing_user_row) == 0
-        ):
-
-            await prisma_client.insert_data(data=user_data, table_name="user")
-
-    return team_row
-
-
-@router.post(
-    "/team/member_delete",
-    tags=["team management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def team_member_delete(
-    data: TeamMemberDeleteRequest,
-    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
-):
-    """ 
-    [BETA]
-
-    delete members (either via user_email or user_id) from a team
-
-    If user doesn't exist, an exception will be raised
-    ```
-    curl -X POST 'http://0.0.0.0:8000/team/update' \
-    
-    -H 'Authorization: Bearer sk-1234' \
-        
-    -H 'Content-Type: application/json' \
-    
-    -D '{
-        "team_id": "45e3e396-ee08-4a61-a88e-16b3ce7e0849",
-        "member": {"role": "user", "user_id": "krrish247652@berri.ai"}
-    }'
-    ```
-    """
-    if prisma_client is None:
-        raise HTTPException(status_code=500, detail={"error": "No db connected"})
-
-    if data.team_id is None:
-        raise HTTPException(status_code=400, detail={"error": "No team id passed in"})
-
-    if data.user_id is None and data.user_email is None:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "Either user_id or user_email needs to be passed in"},
-        )
-
-    existing_team_row = await prisma_client.get_data(  # type: ignore
-        team_id=data.team_id, table_name="team", query_type="find_unique"
-    )
-
-    ## DELETE MEMBER FROM TEAM
-    new_team_members = []
-    for m in existing_team_row.members_with_roles:
-        if (
-            data.user_id is not None
-            and m["user_id"] is not None
-            and data.user_id == m["user_id"]
-        ):
-            continue
-        elif (
-            data.user_email is not None
-            and m["user_email"] is not None
-            and data.user_email == m["user_email"]
-        ):
-            continue
-        new_team_members.append(m)
-    existing_team_row.members_with_roles = new_team_members
-    complete_team_data = LiteLLM_TeamTable(
-        **existing_team_row.model_dump(),
-    )
-
-    team_row = await prisma_client.update_data(
-        update_key_values=complete_team_data.json(exclude_none=True),
-        data=complete_team_data.json(exclude_none=True),
-        table_name="team",
-        team_id=data.team_id,
-    )
-
-    ## DELETE TEAM ID from USER ROW, IF EXISTS ##
-    # get user row
-    key_val = {}
-    if data.user_id is not None:
-        key_val["user_id"] = data.user_id
-    elif data.user_email is not None:
-        key_val["user_email"] = data.user_email
-    existing_user_rows = await prisma_client.get_data(
-        key_val=key_val,
-        table_name="user",
-        query_type="find_all",
-    )
-    user_data = {  # type: ignore
-        "teams": [],
-        "models": team_row["data"].models,
-    }
-    if existing_user_rows is not None and (
-        isinstance(existing_user_rows, list) and len(existing_user_rows) > 0
-    ):
-        for existing_user in existing_user_rows:
-            team_list = []
-            if hasattr(existing_user, "teams"):
-                team_list = existing_user.teams
-                team_list.remove(data.team_id)
-                user_data["user_id"] = existing_user.user_id
-                await prisma_client.update_data(
-                    user_id=existing_user.user_id,
-                    data=user_data,
-                    update_key_values_custom_query={
-                        "teams": {
-                            "set": [team_row["team_id"]],
-                        }
-                    },
-                    table_name="user",
-                )
-
-    return team_row["data"]
-
-
-@router.post(
-    "/team/delete", tags=["team management"], dependencies=[Depends(user_api_key_auth)]
-)
-async def delete_team(
-    data: DeleteTeamRequest,
-    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
-):
-    """
-    delete team and associated team keys
-
-    ```
-    curl --location 'http://0.0.0.0:8000/team/delete' \
-        
-    --header 'Authorization: Bearer sk-1234' \
-        
-    --header 'Content-Type: application/json' \
-    
-    --data-raw '{
-        "team_ids": ["45e3e396-ee08-4a61-a88e-16b3ce7e0849"]
-    }'
-    ```
-    """
-    global prisma_client
-
-    if prisma_client is None:
-        raise HTTPException(status_code=500, detail={"error": "No db connected"})
-
-    if data.team_ids is None:
-        raise HTTPException(status_code=400, detail={"error": "No team id passed in"})
-
-    ## DELETE ASSOCIATED KEYS
-    await prisma_client.delete_data(team_id_list=data.team_ids, table_name="key")
-    ## DELETE TEAMS
-    await prisma_client.delete_data(team_id_list=data.team_ids, table_name="team")
-
-
-@router.get(
-    "/team/info", tags=["team management"], dependencies=[Depends(user_api_key_auth)]
-)
-async def team_info(
-    team_id: str = fastapi.Query(
-        default=None, description="Team ID in the request parameters"
-    )
-):
-    """
-    get info on team + related keys
-
-    ```
-    curl --location 'http://localhost:4000/team/info' \
-    --header 'Authorization: Bearer sk-1234' \
-    --header 'Content-Type: application/json' \
-    --data '{
-        "teams": ["<team-id>",..]
-    }'
-    ```
-    """
-    global prisma_client
-    try:
-        if prisma_client is None:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    "error": f"Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
-                },
-            )
-        if team_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"message": "Malformed request. No team id passed in."},
-            )
-
-        team_info = await prisma_client.get_data(
-            team_id=team_id, table_name="team", query_type="find_unique"
-        )
-        ## GET ALL KEYS ##
-        keys = await prisma_client.get_data(
-            team_id=team_id,
-            table_name="key",
-            query_type="find_all",
-            expires=datetime.now(),
-        )
-
-        if team_info is None:
-            ## make sure we still return a total spend ##
-            spend = 0
-            for k in keys:
-                spend += getattr(k, "spend", 0)
-            team_info = {"spend": spend}
-
-        ## REMOVE HASHED TOKEN INFO before returning ##
-        for key in keys:
-            try:
-                key = key.model_dump()  # noqa
-            except:
-                # if using pydantic v1
-                key = key.dict()
-            key.pop("token", None)
-        return {"team_id": team_id, "team_info": team_info, "keys": keys}
-
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
-                type="auth_error",
-                param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
-            )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
-
-
-#### ORGANIZATION MANAGEMENT ####
-
-
-@router.post(
-    "/organization/new",
-    tags=["organization management"],
-    dependencies=[Depends(user_api_key_auth)],
-    response_model=NewOrganizationResponse,
-)
-async def new_organization(
-    data: NewOrganizationRequest,
-    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
-):
-    """
-    Allow orgs to own teams
-
-    Set org level budgets + model access.
-
-    Only admins can create orgs.
-
-    # Parameters 
-
-    - `organization_alias`: *str* = The name of the organization.
-    - `models`: *List* = The models the organization has access to.
-    - `budget_id`: *Optional[str]* = The id for a budget (tpm/rpm/max budget) for the organization. 
-    ### IF NO BUDGET ID - CREATE ONE WITH THESE PARAMS ### 
-    - `max_budget`: *Optional[float]* = Max budget for org
-    - `tpm_limit`: *Optional[int]* = Max tpm limit for org
-    - `rpm_limit`: *Optional[int]* = Max rpm limit for org
-    - `model_max_budget`: *Optional[dict]* = Max budget for a specific model
-    - `budget_duration`: *Optional[str]* = Frequency of reseting org budget
-
-    Case 1: Create new org **without** a budget_id 
-
-    ```bash
-    curl --location 'http://0.0.0.0:4000/organization/new' \
-    
-    --header 'Authorization: Bearer sk-1234' \
-    
-    --header 'Content-Type: application/json' \
-    
-    --data '{
-        "organization_alias": "my-secret-org",
-        "models": ["model1", "model2"],
-        "max_budget": 100
-    }'
-
-
-    ```
-
-    Case 2: Create new org **with** a budget_id 
-
-    ```bash
-    curl --location 'http://0.0.0.0:4000/organization/new' \
-    
-    --header 'Authorization: Bearer sk-1234' \
-    
-    --header 'Content-Type: application/json' \
-    
-    --data '{
-        "organization_alias": "my-secret-org",
-        "models": ["model1", "model2"],
-        "budget_id": "428eeaa8-f3ac-4e85-a8fb-7dc8d7aa8689"
-    }'
-    ```
-    """
-    global prisma_client
-
-    if prisma_client is None:
-        raise HTTPException(status_code=500, detail={"error": "No db connected"})
-
-    if (
-        user_api_key_dict.user_role is None
-        or user_api_key_dict.user_role != "proxy_admin"
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "error": f"Only admins can create orgs. Your role is = {user_api_key_dict.user_role}"
-            },
-        )
-
-    if data.budget_id is None:
-        """
-        Every organization needs a budget attached.
-
-        If none provided, create one based on provided values
-        """
-        budget_row = LiteLLM_BudgetTable(**data.json(exclude_none=True))
-
-        new_budget = prisma_client.jsonify_object(budget_row.json(exclude_none=True))
-
-        _budget = await prisma_client.db.litellm_budgettable.create(
+        response = await prisma_client.db.litellm_organizationtable.create(
             data={
-                **new_budget,  # type: ignore
-                "created_by": user_api_key_dict.user_id or litellm_proxy_admin_name,
-                "updated_by": user_api_key_dict.user_id or litellm_proxy_admin_name,
+                **new_organization_row,  # type: ignore
             }
-        )  # type: ignore
+        )
 
-        data.budget_id = _budget.budget_id
+        return response
 
-    """
-    Ensure only models that user has access to, are given to org
-    """
-    if len(user_api_key_dict.models) == 0:  # user has access to all models
+
+    @router.post(
+        "/organization/update",
+        tags=["organization management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def update_organization():
+        """[TODO] Not Implemented yet. Let us know if you need this - https://github.com/BerriAI/litellm/issues"""
         pass
-    else:
-        if len(data.models) == 0:
+
+
+    @router.post(
+        "/organization/delete",
+        tags=["organization management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def delete_organization():
+        """[TODO] Not Implemented yet. Let us know if you need this - https://github.com/BerriAI/litellm/issues"""
+        pass
+
+
+    @router.post(
+        "/organization/info",
+        tags=["organization management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def info_organization(data: OrganizationRequest):
+        """
+        Get the org specific information
+        """
+        global prisma_client
+
+        if prisma_client is None:
+            raise HTTPException(status_code=500, detail={"error": "No db connected"})
+
+        if len(data.organizations) == 0:
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "error": f"User not allowed to give access to all models. Select models you want org to have access to."
+                    "error": f"Specify list of organization id's to query. Passed in={data.organizations}"
                 },
             )
-        for m in data.models:
-            if m not in user_api_key_dict.models:
+        response = await prisma_client.db.litellm_organizationtable.find_many(
+            where={"organization_id": {"in": data.organizations}},
+            include={"litellm_budget_table": True},
+        )
+
+        return response
+
+
+    #### BUDGET TABLE MANAGEMENT ####
+
+    if enable_extra_admin:
+        @router.post(
+            "/budget/info",
+            tags=["organization management"],
+            dependencies=[Depends(user_api_key_auth)],
+        )
+        async def info_budget(data: BudgetRequest):
+            """
+            Get the budget id specific information
+            """
+            global prisma_client
+
+            if prisma_client is None:
+                raise HTTPException(status_code=500, detail={"error": "No db connected"})
+
+            if len(data.budgets) == 0:
                 raise HTTPException(
                     status_code=400,
                     detail={
-                        "error": f"User not allowed to give access to model={m}. Models you have access to = {user_api_key_dict.models}"
+                        "error": f"Specify list of budget id's to query. Passed in={data.budgets}"
                     },
                 )
-    organization_row = LiteLLM_OrganizationTable(
-        **data.json(exclude_none=True),
-        created_by=user_api_key_dict.user_id or litellm_proxy_admin_name,
-        updated_by=user_api_key_dict.user_id or litellm_proxy_admin_name,
-    )
-    new_organization_row = prisma_client.jsonify_object(
-        organization_row.json(exclude_none=True)
-    )
-    response = await prisma_client.db.litellm_organizationtable.create(
-        data={
-            **new_organization_row,  # type: ignore
-        }
-    )
+            response = await prisma_client.db.litellm_budgettable.find_many(
+                where={"budget_id": {"in": data.budgets}},
+            )
 
-    return response
-
-
-@router.post(
-    "/organization/update",
-    tags=["organization management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def update_organization():
-    """[TODO] Not Implemented yet. Let us know if you need this - https://github.com/BerriAI/litellm/issues"""
-    pass
-
-
-@router.post(
-    "/organization/delete",
-    tags=["organization management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def delete_organization():
-    """[TODO] Not Implemented yet. Let us know if you need this - https://github.com/BerriAI/litellm/issues"""
-    pass
-
-
-@router.post(
-    "/organization/info",
-    tags=["organization management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def info_organization(data: OrganizationRequest):
-    """
-    Get the org specific information
-    """
-    global prisma_client
-
-    if prisma_client is None:
-        raise HTTPException(status_code=500, detail={"error": "No db connected"})
-
-    if len(data.organizations) == 0:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": f"Specify list of organization id's to query. Passed in={data.organizations}"
-            },
-        )
-    response = await prisma_client.db.litellm_organizationtable.find_many(
-        where={"organization_id": {"in": data.organizations}},
-        include={"litellm_budget_table": True},
-    )
-
-    return response
-
-
-#### BUDGET TABLE MANAGEMENT ####
-
-
-@router.post(
-    "/budget/info",
-    tags=["organization management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def info_budget(data: BudgetRequest):
-    """
-    Get the budget id specific information
-    """
-    global prisma_client
-
-    if prisma_client is None:
-        raise HTTPException(status_code=500, detail={"error": "No db connected"})
-
-    if len(data.budgets) == 0:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": f"Specify list of budget id's to query. Passed in={data.budgets}"
-            },
-        )
-    response = await prisma_client.db.litellm_budgettable.find_many(
-        where={"budget_id": {"in": data.budgets}},
-    )
-
-    return response
+            return response
 
 
 #### MODEL MANAGEMENT ####
 
+if enable_extra_admin:
+    #### [BETA] - This is a beta endpoint, format might change based on user feedback. - https://github.com/BerriAI/litellm/issues/964
+    @router.post(
+        "/model/new",
+        description="Allows adding new models to the model list in the config.yaml",
+        tags=["model management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def add_new_model(model_params: ModelParams):
+        global llm_router, llm_model_list, general_settings, user_config_file_path, proxy_config
+        try:
+            # Load existing config
+            config = await proxy_config.get_config()
 
-#### [BETA] - This is a beta endpoint, format might change based on user feedback. - https://github.com/BerriAI/litellm/issues/964
-@router.post(
-    "/model/new",
-    description="Allows adding new models to the model list in the config.yaml",
-    tags=["model management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def add_new_model(model_params: ModelParams):
-    global llm_router, llm_model_list, general_settings, user_config_file_path, proxy_config
-    try:
-        # Load existing config
-        config = await proxy_config.get_config()
+            verbose_proxy_logger.debug(f"User config path: {user_config_file_path}")
 
-        verbose_proxy_logger.debug(f"User config path: {user_config_file_path}")
+            verbose_proxy_logger.debug(f"Loaded config: {config}")
+            # Add the new model to the config
+            model_info = model_params.model_info.json()
+            model_info = {k: v for k, v in model_info.items() if v is not None}
+            config["model_list"].append(
+                {
+                    "model_name": model_params.model_name,
+                    "litellm_params": model_params.litellm_params,
+                    "model_info": model_info,
+                }
+            )
 
-        verbose_proxy_logger.debug(f"Loaded config: {config}")
-        # Add the new model to the config
-        model_info = model_params.model_info.json()
-        model_info = {k: v for k, v in model_info.items() if v is not None}
-        config["model_list"].append(
-            {
-                "model_name": model_params.model_name,
-                "litellm_params": model_params.litellm_params,
-                "model_info": model_info,
-            }
-        )
+            verbose_proxy_logger.debug(f"updated model list: {config['model_list']}")
 
-        verbose_proxy_logger.debug(f"updated model list: {config['model_list']}")
+            # Save new config
+            await proxy_config.save_config(new_config=config)
+            return {"message": "Model added successfully"}
 
-        # Save new config
-        await proxy_config.save_config(new_config=config)
-        return {"message": "Model added successfully"}
-
-    except Exception as e:
-        traceback.print_exc()
-        if isinstance(e, HTTPException):
+        except Exception as e:
+            traceback.print_exc()
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
             raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                message="Authentication Error, " + str(e),
                 type="auth_error",
                 param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                code=status.HTTP_400_BAD_REQUEST,
             )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
 
 
 @router.get(
@@ -5774,57 +5785,57 @@ async def model_info_v2(
     verbose_proxy_logger.debug(f"all_models: {all_models}")
     return {"data": all_models}
 
-
-@router.get(
-    "/model/metrics",
-    description="View number of requests & avg latency per model on config.yaml",
-    tags=["model management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def model_metrics(
-    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
-):
-    global prisma_client
-    if prisma_client is None:
-        raise ProxyException(
-            message="Prisma Client is not initialized",
-            type="internal_error",
-            param="None",
-            code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-
-    sql_query = """
-        SELECT
-            CASE WHEN api_base = '' THEN model ELSE CONCAT(model, '-', api_base) END AS combined_model_api_base,
-            COUNT(*) AS num_requests,
-            AVG(EXTRACT(epoch FROM ("endTime" - "startTime"))) AS avg_latency_seconds
-        FROM
-            "LiteLLM_SpendLogs"
-        WHERE
-            "startTime" >= NOW() - INTERVAL '10000 hours'
-        GROUP BY
-            CASE WHEN api_base = '' THEN model ELSE CONCAT(model, '-', api_base) END
-        ORDER BY
-            num_requests DESC
-        LIMIT 50;
-    """
-
-    db_response = await prisma_client.db.query_raw(query=sql_query)
-    response: List[dict] = []
-    if response is not None:
-        # loop through all models
-        for model_data in db_response:
-            model = model_data.get("combined_model_api_base", "")
-            num_requests = model_data.get("num_requests", 0)
-            avg_latency_seconds = model_data.get("avg_latency_seconds", 0)
-            response.append(
-                {
-                    "model": model,
-                    "num_requests": num_requests,
-                    "avg_latency_seconds": avg_latency_seconds,
-                }
+if enable_extra_admin:
+    @router.get(
+        "/model/metrics",
+        description="View number of requests & avg latency per model on config.yaml",
+        tags=["model management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def model_metrics(
+        user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+    ):
+        global prisma_client
+        if prisma_client is None:
+            raise ProxyException(
+                message="Prisma Client is not initialized",
+                type="internal_error",
+                param="None",
+                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-    return response
+
+        sql_query = """
+            SELECT
+                CASE WHEN api_base = '' THEN model ELSE CONCAT(model, '-', api_base) END AS combined_model_api_base,
+                COUNT(*) AS num_requests,
+                AVG(EXTRACT(epoch FROM ("endTime" - "startTime"))) AS avg_latency_seconds
+            FROM
+                "LiteLLM_SpendLogs"
+            WHERE
+                "startTime" >= NOW() - INTERVAL '10000 hours'
+            GROUP BY
+                CASE WHEN api_base = '' THEN model ELSE CONCAT(model, '-', api_base) END
+            ORDER BY
+                num_requests DESC
+            LIMIT 50;
+        """
+
+        db_response = await prisma_client.db.query_raw(query=sql_query)
+        response: List[dict] = []
+        if response is not None:
+            # loop through all models
+            for model_data in db_response:
+                model = model_data.get("combined_model_api_base", "")
+                num_requests = model_data.get("num_requests", 0)
+                avg_latency_seconds = model_data.get("avg_latency_seconds", 0)
+                response.append(
+                    {
+                        "model": model,
+                        "num_requests": num_requests,
+                        "avg_latency_seconds": avg_latency_seconds,
+                    }
+                )
+        return response
 
 
 @router.get(
@@ -5891,65 +5902,65 @@ async def model_info_v1(
     verbose_proxy_logger.debug(f"all_models: {all_models}")
     return {"data": all_models}
 
+if enable_extra_admin:
+    #### [BETA] - This is a beta endpoint, format might change based on user feedback. - https://github.com/BerriAI/litellm/issues/964
+    @router.post(
+        "/model/delete",
+        description="Allows deleting models in the model list in the config.yaml",
+        tags=["model management"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def delete_model(model_info: ModelInfoDelete):
+        global llm_router, llm_model_list, general_settings, user_config_file_path, proxy_config
+        try:
+            if not os.path.exists(user_config_file_path):
+                raise HTTPException(status_code=404, detail="Config file does not exist.")
 
-#### [BETA] - This is a beta endpoint, format might change based on user feedback. - https://github.com/BerriAI/litellm/issues/964
-@router.post(
-    "/model/delete",
-    description="Allows deleting models in the model list in the config.yaml",
-    tags=["model management"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def delete_model(model_info: ModelInfoDelete):
-    global llm_router, llm_model_list, general_settings, user_config_file_path, proxy_config
-    try:
-        if not os.path.exists(user_config_file_path):
-            raise HTTPException(status_code=404, detail="Config file does not exist.")
+            # Load existing config
+            config = await proxy_config.get_config()
 
-        # Load existing config
-        config = await proxy_config.get_config()
+            # If model_list is not in the config, nothing can be deleted
+            if len(config.get("model_list", [])) == 0:
+                raise HTTPException(
+                    status_code=400, detail="No model list available in the config."
+                )
 
-        # If model_list is not in the config, nothing can be deleted
-        if len(config.get("model_list", [])) == 0:
-            raise HTTPException(
-                status_code=400, detail="No model list available in the config."
-            )
+            # Check if the model with the specified model_id exists
+            model_to_delete = None
+            for model in config["model_list"]:
+                if model.get("model_info", {}).get("id", None) == model_info.id:
+                    model_to_delete = model
+                    break
 
-        # Check if the model with the specified model_id exists
-        model_to_delete = None
-        for model in config["model_list"]:
-            if model.get("model_info", {}).get("id", None) == model_info.id:
-                model_to_delete = model
-                break
+            # If the model was not found, return an error
+            if model_to_delete is None:
+                raise HTTPException(
+                    status_code=400, detail="Model with given model_id not found."
+                )
 
-        # If the model was not found, return an error
-        if model_to_delete is None:
-            raise HTTPException(
-                status_code=400, detail="Model with given model_id not found."
-            )
+            # Remove model from the list and save the updated config
+            config["model_list"].remove(model_to_delete)
 
-        # Remove model from the list and save the updated config
-        config["model_list"].remove(model_to_delete)
+            # Save updated config
+            config = await proxy_config.save_config(new_config=config)
+            return {"message": "Model deleted successfully"}
 
-        # Save updated config
-        config = await proxy_config.save_config(new_config=config)
-        return {"message": "Model deleted successfully"}
-
-    except Exception as e:
-        if isinstance(e, HTTPException):
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
             raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                message="Authentication Error, " + str(e),
                 type="auth_error",
                 param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                code=status.HTTP_400_BAD_REQUEST,
             )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
 
 
 #### EXPERIMENTAL QUEUING ####
@@ -6271,77 +6282,385 @@ async def google_login(request: Request):
 
         return HTMLResponse(content=html_form, status_code=200)
 
+if enable_ui_panel:
+    @router.post(
+        "/login", include_in_schema=False
+    )  # hidden since this is a helper for UI sso login
+    async def login(request: Request):
+        try:
+            import multipart
+        except ImportError:
+            subprocess.run(["pip", "install", "python-multipart"])
+        global master_key
+        form = await request.form()
+        username = str(form.get("username"))
+        password = str(form.get("password"))
+        ui_username = os.getenv("UI_USERNAME", "admin")
+        ui_password = os.getenv("UI_PASSWORD", None)
+        if ui_password is None:
+            ui_password = str(master_key) if master_key is not None else None
+        if ui_password is None:
+            raise ProxyException(
+                message="set Proxy master key to use UI. https://docs.litellm.ai/docs/proxy/virtual_keys",
+                type="auth_error",
+                param="UI_PASSWORD",
+                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        if secrets.compare_digest(username, ui_username) and secrets.compare_digest(
+            password, ui_password
+        ):
+            user_role = "app_owner"
+            user_id = username
+            key_user_id = user_id
+            if (
+                os.getenv("PROXY_ADMIN_ID", None) is not None
+                and os.environ["PROXY_ADMIN_ID"] == user_id
+            ) or user_id == "admin":
+                # checks if user is admin
+                user_role = "app_admin"
+                key_user_id = os.getenv("PROXY_ADMIN_ID", "default_user_id")
 
-@router.post(
-    "/login", include_in_schema=False
-)  # hidden since this is a helper for UI sso login
-async def login(request: Request):
-    try:
-        import multipart
-    except ImportError:
-        subprocess.run(["pip", "install", "python-multipart"])
-    global master_key
-    form = await request.form()
-    username = str(form.get("username"))
-    password = str(form.get("password"))
-    ui_username = os.getenv("UI_USERNAME", "admin")
-    ui_password = os.getenv("UI_PASSWORD", None)
-    if ui_password is None:
-        ui_password = str(master_key) if master_key is not None else None
-    if ui_password is None:
-        raise ProxyException(
-            message="set Proxy master key to use UI. https://docs.litellm.ai/docs/proxy/virtual_keys",
-            type="auth_error",
-            param="UI_PASSWORD",
-            code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            # Admin is Authe'd in - generate key for the UI to access Proxy
+
+            # ensure this user is set as the proxy admin, in this route there is no sso, we can assume this user is only the admin
+            await user_update(
+                data=UpdateUserRequest(
+                    user_id=key_user_id,
+                    user_role="proxy_admin",
+                )
+            )
+            if os.getenv("DATABASE_URL") is not None:
+                response = await generate_key_helper_fn(
+                    **{"user_role": "proxy_admin", "duration": "1hr", "key_max_budget": 5, "models": [], "aliases": {}, "config": {}, "spend": 0, "user_id": key_user_id, "team_id": "litellm-dashboard"}  # type: ignore
+                )
+            else:
+                response = {
+                    "token": "sk-gm",
+                    "user_id": "litellm-dashboard",
+                }
+            key = response["token"]  # type: ignore
+            litellm_dashboard_ui = os.getenv("PROXY_BASE_URL", "")
+            if litellm_dashboard_ui.endswith("/"):
+                litellm_dashboard_ui += "ui/"
+            else:
+                litellm_dashboard_ui += "/ui/"
+            import jwt
+
+            jwt_token = jwt.encode(
+                {
+                    "user_id": user_id,
+                    "key": key,
+                    "user_email": user_id,
+                    "user_role": "app_admin",  # this is the path without sso - we can assume only admins will use this
+                    "login_method": "username_password",
+                },
+                "secret",
+                algorithm="HS256",
+            )
+            litellm_dashboard_ui += "?userID=" + user_id + "&token=" + jwt_token
+            # if a user has logged in they should be allowed to create keys - this ensures that it's set to True
+            general_settings["allow_user_auth"] = True
+            return RedirectResponse(url=litellm_dashboard_ui, status_code=303)
+        else:
+            raise ProxyException(
+                message=f"Invalid credentials used to access UI. Passed in username: {username}, passed in password: {password}.\nCheck 'UI_USERNAME', 'UI_PASSWORD' in .env file",
+                type="auth_error",
+                param="invalid_credentials",
+                code=status.HTTP_401_UNAUTHORIZED,
+            )
+
+
+    @app.get("/get_image", include_in_schema=False)
+    def get_image():
+        """Get logo to show on admin UI"""
+        from fastapi.responses import FileResponse
+
+        # get current_dir
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        default_logo = os.path.join(current_dir, "logo.jpg")
+
+        logo_path = os.getenv("UI_LOGO_PATH", default_logo)
+        verbose_proxy_logger.debug(f"Reading logo from {logo_path}")
+
+        # Check if the logo path is an HTTP/HTTPS URL
+        if logo_path.startswith(("http://", "https://")):
+            # Download the image and cache it
+            response = requests.get(logo_path)
+            if response.status_code == 200:
+                # Save the image to a local file
+                cache_path = os.path.join(current_dir, "cached_logo.jpg")
+                with open(cache_path, "wb") as f:
+                    f.write(response.content)
+
+                # Return the cached image as a FileResponse
+                return FileResponse(cache_path, media_type="image/jpeg")
+            else:
+                # Handle the case when the image cannot be downloaded
+                return FileResponse(default_logo, media_type="image/jpeg")
+        else:
+            # Return the local image file if the logo path is not an HTTP/HTTPS URL
+            return FileResponse(logo_path, media_type="image/jpeg")
+
+
+    @app.get("/sso/callback", tags=["experimental"])
+    async def auth_callback(request: Request):
+        """Verify login"""
+        global general_settings, ui_access_mode
+        microsoft_client_id = os.getenv("MICROSOFT_CLIENT_ID", None)
+        google_client_id = os.getenv("GOOGLE_CLIENT_ID", None)
+        generic_client_id = os.getenv("GENERIC_CLIENT_ID", None)
+        # get url from request
+        redirect_url = os.getenv("PROXY_BASE_URL", str(request.base_url))
+        if redirect_url.endswith("/"):
+            redirect_url += "sso/callback"
+        else:
+            redirect_url += "/sso/callback"
+        if google_client_id is not None:
+            from fastapi_sso.sso.google import GoogleSSO
+
+            google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET", None)
+            if google_client_secret is None:
+                raise ProxyException(
+                    message="GOOGLE_CLIENT_SECRET not set. Set it in .env file",
+                    type="auth_error",
+                    param="GOOGLE_CLIENT_SECRET",
+                    code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            google_sso = GoogleSSO(
+                client_id=google_client_id,
+                redirect_uri=redirect_url,
+                client_secret=google_client_secret,
+            )
+            result = await google_sso.verify_and_process(request)
+        elif microsoft_client_id is not None:
+            from fastapi_sso.sso.microsoft import MicrosoftSSO
+
+            microsoft_client_secret = os.getenv("MICROSOFT_CLIENT_SECRET", None)
+            microsoft_tenant = os.getenv("MICROSOFT_TENANT", None)
+            if microsoft_client_secret is None:
+                raise ProxyException(
+                    message="MICROSOFT_CLIENT_SECRET not set. Set it in .env file",
+                    type="auth_error",
+                    param="MICROSOFT_CLIENT_SECRET",
+                    code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            if microsoft_tenant is None:
+                raise ProxyException(
+                    message="MICROSOFT_TENANT not set. Set it in .env file",
+                    type="auth_error",
+                    param="MICROSOFT_TENANT",
+                    code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            microsoft_sso = MicrosoftSSO(
+                client_id=microsoft_client_id,
+                client_secret=microsoft_client_secret,
+                tenant=microsoft_tenant,
+                redirect_uri=redirect_url,
+                allow_insecure_http=True,
+            )
+            result = await microsoft_sso.verify_and_process(request)
+        elif generic_client_id is not None:
+            # make generic sso provider
+            from fastapi_sso.sso.generic import create_provider, DiscoveryDocument, OpenID
+
+            generic_client_secret = os.getenv("GENERIC_CLIENT_SECRET", None)
+            generic_scope = os.getenv("GENERIC_SCOPE", "openid email profile").split(" ")
+            generic_authorization_endpoint = os.getenv(
+                "GENERIC_AUTHORIZATION_ENDPOINT", None
+            )
+            generic_token_endpoint = os.getenv("GENERIC_TOKEN_ENDPOINT", None)
+            generic_userinfo_endpoint = os.getenv("GENERIC_USERINFO_ENDPOINT", None)
+            generic_include_client_id = (
+                os.getenv("GENERIC_INCLUDE_CLIENT_ID", "false").lower() == "true"
+            )
+            if generic_client_secret is None:
+                raise ProxyException(
+                    message="GENERIC_CLIENT_SECRET not set. Set it in .env file",
+                    type="auth_error",
+                    param="GENERIC_CLIENT_SECRET",
+                    code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            if generic_authorization_endpoint is None:
+                raise ProxyException(
+                    message="GENERIC_AUTHORIZATION_ENDPOINT not set. Set it in .env file",
+                    type="auth_error",
+                    param="GENERIC_AUTHORIZATION_ENDPOINT",
+                    code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            if generic_token_endpoint is None:
+                raise ProxyException(
+                    message="GENERIC_TOKEN_ENDPOINT not set. Set it in .env file",
+                    type="auth_error",
+                    param="GENERIC_TOKEN_ENDPOINT",
+                    code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            if generic_userinfo_endpoint is None:
+                raise ProxyException(
+                    message="GENERIC_USERINFO_ENDPOINT not set. Set it in .env file",
+                    type="auth_error",
+                    param="GENERIC_USERINFO_ENDPOINT",
+                    code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            verbose_proxy_logger.debug(
+                f"authorization_endpoint: {generic_authorization_endpoint}\ntoken_endpoint: {generic_token_endpoint}\nuserinfo_endpoint: {generic_userinfo_endpoint}"
+            )
+            verbose_proxy_logger.debug(
+                f"GENERIC_REDIRECT_URI: {redirect_url}\nGENERIC_CLIENT_ID: {generic_client_id}\n"
+            )
+
+            generic_user_id_attribute_name = os.getenv(
+                "GENERIC_USER_ID_ATTRIBUTE", "preferred_username"
+            )
+            generic_user_display_name_attribute_name = os.getenv(
+                "GENERIC_USER_DISPLAY_NAME_ATTRIBUTE", "sub"
+            )
+            generic_user_email_attribute_name = os.getenv(
+                "GENERIC_USER_EMAIL_ATTRIBUTE", "email"
+            )
+            generic_user_role_attribute_name = os.getenv(
+                "GENERIC_USER_ROLE_ATTRIBUTE", "role"
+            )
+            generic_user_first_name_attribute_name = os.getenv(
+                "GENERIC_USER_FIRST_NAME_ATTRIBUTE", "first_name"
+            )
+            generic_user_last_name_attribute_name = os.getenv(
+                "GENERIC_USER_LAST_NAME_ATTRIBUTE", "last_name"
+            )
+
+            verbose_proxy_logger.debug(
+                f" generic_user_id_attribute_name: {generic_user_id_attribute_name}\n generic_user_email_attribute_name: {generic_user_email_attribute_name}\n generic_user_role_attribute_name: {generic_user_role_attribute_name}"
+            )
+
+            discovery = DiscoveryDocument(
+                authorization_endpoint=generic_authorization_endpoint,
+                token_endpoint=generic_token_endpoint,
+                userinfo_endpoint=generic_userinfo_endpoint,
+            )
+
+            def response_convertor(response, client):
+                return OpenID(
+                    id=response.get(generic_user_id_attribute_name),
+                    display_name=response.get(generic_user_display_name_attribute_name),
+                    email=response.get(generic_user_email_attribute_name),
+                    first_name=response.get(generic_user_first_name_attribute_name),
+                    last_name=response.get(generic_user_last_name_attribute_name),
+                )
+
+            SSOProvider = create_provider(
+                name="oidc",
+                discovery_document=discovery,
+                response_convertor=response_convertor,
+            )
+            generic_sso = SSOProvider(
+                client_id=generic_client_id,
+                client_secret=generic_client_secret,
+                redirect_uri=redirect_url,
+                allow_insecure_http=True,
+                scope=generic_scope,
+            )
+            verbose_proxy_logger.debug(f"calling generic_sso.verify_and_process")
+            result = await generic_sso.verify_and_process(
+                request, params={"include_client_id": generic_include_client_id}
+            )
+            verbose_proxy_logger.debug(f"generic result: {result}")
+
+        # User is Authe'd in - generate key for the UI to access Proxy
+        user_email = getattr(result, "email", None)
+        user_id = getattr(result, "id", None)
+
+        # generic client id
+        if generic_client_id is not None:
+            user_id = getattr(result, "id", None)
+            user_email = getattr(result, "email", None)
+            user_role = getattr(result, generic_user_role_attribute_name, None)
+
+        if user_id is None:
+            user_id = getattr(result, "first_name", "") + getattr(result, "last_name", "")
+
+        user_info = None
+        user_id_models: List = []
+
+        # User might not be already created on first generation of key
+        # But if it is, we want their models preferences
+        default_ui_key_values = {
+            "duration": "1hr",
+            "key_max_budget": 0.01,
+            "aliases": {},
+            "config": {},
+            "spend": 0,
+            "team_id": "litellm-dashboard",
+        }
+        user_defined_values = {
+            "models": user_id_models,
+            "user_id": user_id,
+            "user_email": user_email,
+        }
+        try:
+            user_role = None
+            if prisma_client is not None:
+                user_info = await prisma_client.get_data(user_id=user_id, table_name="user")
+                verbose_proxy_logger.debug(
+                    f"user_info: {user_info}; litellm.default_user_params: {litellm.default_user_params}"
+                )
+                if user_info is not None:
+                    user_defined_values = {
+                        "models": getattr(user_info, "models", []),
+                        "user_id": getattr(user_info, "user_id", user_id),
+                        "user_email": getattr(user_info, "user_id", user_email),
+                    }
+                    user_role = getattr(user_info, "user_role", None)
+                elif litellm.default_user_params is not None and isinstance(
+                    litellm.default_user_params, dict
+                ):
+                    user_defined_values = {
+                        "models": litellm.default_user_params.get("models", user_id_models),
+                        "user_id": litellm.default_user_params.get("user_id", user_id),
+                        "user_email": litellm.default_user_params.get(
+                            "user_email", user_email
+                        ),
+                    }
+        except Exception as e:
+            pass
+
+        verbose_proxy_logger.info(
+            f"user_defined_values for creating ui key: {user_defined_values}"
         )
-    if secrets.compare_digest(username, ui_username) and secrets.compare_digest(
-        password, ui_password
-    ):
-        user_role = "app_owner"
-        user_id = username
-        key_user_id = user_id
+        response = await generate_key_helper_fn(
+            **default_ui_key_values, **user_defined_values  # type: ignore
+        )
+        key = response["token"]  # type: ignore
+        user_id = response["user_id"]  # type: ignore
+        litellm_dashboard_ui = "/ui/"
+        user_role = user_role or "app_owner"
         if (
             os.getenv("PROXY_ADMIN_ID", None) is not None
             and os.environ["PROXY_ADMIN_ID"] == user_id
-        ) or user_id == "admin":
+        ):
             # checks if user is admin
             user_role = "app_admin"
-            key_user_id = os.getenv("PROXY_ADMIN_ID", "default_user_id")
 
-        # Admin is Authe'd in - generate key for the UI to access Proxy
-
-        # ensure this user is set as the proxy admin, in this route there is no sso, we can assume this user is only the admin
-        await user_update(
-            data=UpdateUserRequest(
-                user_id=key_user_id,
-                user_role="proxy_admin",
-            )
+        verbose_proxy_logger.debug(
+            f"user_role: {user_role}; ui_access_mode: {ui_access_mode}"
         )
-        if os.getenv("DATABASE_URL") is not None:
-            response = await generate_key_helper_fn(
-                **{"user_role": "proxy_admin", "duration": "1hr", "key_max_budget": 5, "models": [], "aliases": {}, "config": {}, "spend": 0, "user_id": key_user_id, "team_id": "litellm-dashboard"}  # type: ignore
+        ## CHECK IF ROLE ALLOWED TO USE PROXY ##
+        if ui_access_mode == "admin_only" and "admin" not in user_role:
+            verbose_proxy_logger.debug("EXCEPTION RAISED")
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": f"User not allowed to access proxy. User role={user_role}, proxy mode={ui_access_mode}"
+                },
             )
-        else:
-            response = {
-                "token": "sk-gm",
-                "user_id": "litellm-dashboard",
-            }
-        key = response["token"]  # type: ignore
-        litellm_dashboard_ui = os.getenv("PROXY_BASE_URL", "")
-        if litellm_dashboard_ui.endswith("/"):
-            litellm_dashboard_ui += "ui/"
-        else:
-            litellm_dashboard_ui += "/ui/"
+
         import jwt
 
         jwt_token = jwt.encode(
             {
                 "user_id": user_id,
                 "key": key,
-                "user_email": user_id,
-                "user_role": "app_admin",  # this is the path without sso - we can assume only admins will use this
-                "login_method": "username_password",
+                "user_email": user_email,
+                "user_role": user_role,
+                "login_method": "sso",
             },
             "secret",
             algorithm="HS256",
@@ -6349,392 +6668,84 @@ async def login(request: Request):
         litellm_dashboard_ui += "?userID=" + user_id + "&token=" + jwt_token
         # if a user has logged in they should be allowed to create keys - this ensures that it's set to True
         general_settings["allow_user_auth"] = True
-        return RedirectResponse(url=litellm_dashboard_ui, status_code=303)
-    else:
-        raise ProxyException(
-            message=f"Invalid credentials used to access UI. Passed in username: {username}, passed in password: {password}.\nCheck 'UI_USERNAME', 'UI_PASSWORD' in .env file",
-            type="auth_error",
-            param="invalid_credentials",
-            code=status.HTTP_401_UNAUTHORIZED,
-        )
+        return RedirectResponse(url=litellm_dashboard_ui)
 
 
-@app.get("/get_image", include_in_schema=False)
-def get_image():
-    """Get logo to show on admin UI"""
-    from fastapi.responses import FileResponse
+    #### BASIC ENDPOINTS ####
+    @router.post(
+        "/config/update",
+        tags=["config.yaml"],
+        dependencies=[Depends(user_api_key_auth)],
+    )
+    async def update_config(config_info: ConfigYAML):
+        """
+        For Admin UI - allows admin to update config via UI
 
-    # get current_dir
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    default_logo = os.path.join(current_dir, "logo.jpg")
+        Currently supports modifying General Settings + LiteLLM settings
+        """
+        global llm_router, llm_model_list, general_settings, proxy_config, proxy_logging_obj
+        try:
+            # Load existing config
+            config = await proxy_config.get_config()
 
-    logo_path = os.getenv("UI_LOGO_PATH", default_logo)
-    verbose_proxy_logger.debug(f"Reading logo from {logo_path}")
+            backup_config = copy.deepcopy(config)
+            verbose_proxy_logger.debug(f"Loaded config: {config}")
 
-    # Check if the logo path is an HTTP/HTTPS URL
-    if logo_path.startswith(("http://", "https://")):
-        # Download the image and cache it
-        response = requests.get(logo_path)
-        if response.status_code == 200:
-            # Save the image to a local file
-            cache_path = os.path.join(current_dir, "cached_logo.jpg")
-            with open(cache_path, "wb") as f:
-                f.write(response.content)
-
-            # Return the cached image as a FileResponse
-            return FileResponse(cache_path, media_type="image/jpeg")
-        else:
-            # Handle the case when the image cannot be downloaded
-            return FileResponse(default_logo, media_type="image/jpeg")
-    else:
-        # Return the local image file if the logo path is not an HTTP/HTTPS URL
-        return FileResponse(logo_path, media_type="image/jpeg")
-
-
-@app.get("/sso/callback", tags=["experimental"])
-async def auth_callback(request: Request):
-    """Verify login"""
-    global general_settings, ui_access_mode
-    microsoft_client_id = os.getenv("MICROSOFT_CLIENT_ID", None)
-    google_client_id = os.getenv("GOOGLE_CLIENT_ID", None)
-    generic_client_id = os.getenv("GENERIC_CLIENT_ID", None)
-    # get url from request
-    redirect_url = os.getenv("PROXY_BASE_URL", str(request.base_url))
-    if redirect_url.endswith("/"):
-        redirect_url += "sso/callback"
-    else:
-        redirect_url += "/sso/callback"
-    if google_client_id is not None:
-        from fastapi_sso.sso.google import GoogleSSO
-
-        google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET", None)
-        if google_client_secret is None:
-            raise ProxyException(
-                message="GOOGLE_CLIENT_SECRET not set. Set it in .env file",
-                type="auth_error",
-                param="GOOGLE_CLIENT_SECRET",
-                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        google_sso = GoogleSSO(
-            client_id=google_client_id,
-            redirect_uri=redirect_url,
-            client_secret=google_client_secret,
-        )
-        result = await google_sso.verify_and_process(request)
-    elif microsoft_client_id is not None:
-        from fastapi_sso.sso.microsoft import MicrosoftSSO
-
-        microsoft_client_secret = os.getenv("MICROSOFT_CLIENT_SECRET", None)
-        microsoft_tenant = os.getenv("MICROSOFT_TENANT", None)
-        if microsoft_client_secret is None:
-            raise ProxyException(
-                message="MICROSOFT_CLIENT_SECRET not set. Set it in .env file",
-                type="auth_error",
-                param="MICROSOFT_CLIENT_SECRET",
-                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        if microsoft_tenant is None:
-            raise ProxyException(
-                message="MICROSOFT_TENANT not set. Set it in .env file",
-                type="auth_error",
-                param="MICROSOFT_TENANT",
-                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        microsoft_sso = MicrosoftSSO(
-            client_id=microsoft_client_id,
-            client_secret=microsoft_client_secret,
-            tenant=microsoft_tenant,
-            redirect_uri=redirect_url,
-            allow_insecure_http=True,
-        )
-        result = await microsoft_sso.verify_and_process(request)
-    elif generic_client_id is not None:
-        # make generic sso provider
-        from fastapi_sso.sso.generic import create_provider, DiscoveryDocument, OpenID
-
-        generic_client_secret = os.getenv("GENERIC_CLIENT_SECRET", None)
-        generic_scope = os.getenv("GENERIC_SCOPE", "openid email profile").split(" ")
-        generic_authorization_endpoint = os.getenv(
-            "GENERIC_AUTHORIZATION_ENDPOINT", None
-        )
-        generic_token_endpoint = os.getenv("GENERIC_TOKEN_ENDPOINT", None)
-        generic_userinfo_endpoint = os.getenv("GENERIC_USERINFO_ENDPOINT", None)
-        generic_include_client_id = (
-            os.getenv("GENERIC_INCLUDE_CLIENT_ID", "false").lower() == "true"
-        )
-        if generic_client_secret is None:
-            raise ProxyException(
-                message="GENERIC_CLIENT_SECRET not set. Set it in .env file",
-                type="auth_error",
-                param="GENERIC_CLIENT_SECRET",
-                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        if generic_authorization_endpoint is None:
-            raise ProxyException(
-                message="GENERIC_AUTHORIZATION_ENDPOINT not set. Set it in .env file",
-                type="auth_error",
-                param="GENERIC_AUTHORIZATION_ENDPOINT",
-                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        if generic_token_endpoint is None:
-            raise ProxyException(
-                message="GENERIC_TOKEN_ENDPOINT not set. Set it in .env file",
-                type="auth_error",
-                param="GENERIC_TOKEN_ENDPOINT",
-                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        if generic_userinfo_endpoint is None:
-            raise ProxyException(
-                message="GENERIC_USERINFO_ENDPOINT not set. Set it in .env file",
-                type="auth_error",
-                param="GENERIC_USERINFO_ENDPOINT",
-                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        verbose_proxy_logger.debug(
-            f"authorization_endpoint: {generic_authorization_endpoint}\ntoken_endpoint: {generic_token_endpoint}\nuserinfo_endpoint: {generic_userinfo_endpoint}"
-        )
-        verbose_proxy_logger.debug(
-            f"GENERIC_REDIRECT_URI: {redirect_url}\nGENERIC_CLIENT_ID: {generic_client_id}\n"
-        )
-
-        generic_user_id_attribute_name = os.getenv(
-            "GENERIC_USER_ID_ATTRIBUTE", "preferred_username"
-        )
-        generic_user_display_name_attribute_name = os.getenv(
-            "GENERIC_USER_DISPLAY_NAME_ATTRIBUTE", "sub"
-        )
-        generic_user_email_attribute_name = os.getenv(
-            "GENERIC_USER_EMAIL_ATTRIBUTE", "email"
-        )
-        generic_user_role_attribute_name = os.getenv(
-            "GENERIC_USER_ROLE_ATTRIBUTE", "role"
-        )
-        generic_user_first_name_attribute_name = os.getenv(
-            "GENERIC_USER_FIRST_NAME_ATTRIBUTE", "first_name"
-        )
-        generic_user_last_name_attribute_name = os.getenv(
-            "GENERIC_USER_LAST_NAME_ATTRIBUTE", "last_name"
-        )
-
-        verbose_proxy_logger.debug(
-            f" generic_user_id_attribute_name: {generic_user_id_attribute_name}\n generic_user_email_attribute_name: {generic_user_email_attribute_name}\n generic_user_role_attribute_name: {generic_user_role_attribute_name}"
-        )
-
-        discovery = DiscoveryDocument(
-            authorization_endpoint=generic_authorization_endpoint,
-            token_endpoint=generic_token_endpoint,
-            userinfo_endpoint=generic_userinfo_endpoint,
-        )
-
-        def response_convertor(response, client):
-            return OpenID(
-                id=response.get(generic_user_id_attribute_name),
-                display_name=response.get(generic_user_display_name_attribute_name),
-                email=response.get(generic_user_email_attribute_name),
-                first_name=response.get(generic_user_first_name_attribute_name),
-                last_name=response.get(generic_user_last_name_attribute_name),
-            )
-
-        SSOProvider = create_provider(
-            name="oidc",
-            discovery_document=discovery,
-            response_convertor=response_convertor,
-        )
-        generic_sso = SSOProvider(
-            client_id=generic_client_id,
-            client_secret=generic_client_secret,
-            redirect_uri=redirect_url,
-            allow_insecure_http=True,
-            scope=generic_scope,
-        )
-        verbose_proxy_logger.debug(f"calling generic_sso.verify_and_process")
-        result = await generic_sso.verify_and_process(
-            request, params={"include_client_id": generic_include_client_id}
-        )
-        verbose_proxy_logger.debug(f"generic result: {result}")
-
-    # User is Authe'd in - generate key for the UI to access Proxy
-    user_email = getattr(result, "email", None)
-    user_id = getattr(result, "id", None)
-
-    # generic client id
-    if generic_client_id is not None:
-        user_id = getattr(result, "id", None)
-        user_email = getattr(result, "email", None)
-        user_role = getattr(result, generic_user_role_attribute_name, None)
-
-    if user_id is None:
-        user_id = getattr(result, "first_name", "") + getattr(result, "last_name", "")
-
-    user_info = None
-    user_id_models: List = []
-
-    # User might not be already created on first generation of key
-    # But if it is, we want their models preferences
-    default_ui_key_values = {
-        "duration": "1hr",
-        "key_max_budget": 0.01,
-        "aliases": {},
-        "config": {},
-        "spend": 0,
-        "team_id": "litellm-dashboard",
-    }
-    user_defined_values = {
-        "models": user_id_models,
-        "user_id": user_id,
-        "user_email": user_email,
-    }
-    try:
-        user_role = None
-        if prisma_client is not None:
-            user_info = await prisma_client.get_data(user_id=user_id, table_name="user")
-            verbose_proxy_logger.debug(
-                f"user_info: {user_info}; litellm.default_user_params: {litellm.default_user_params}"
-            )
-            if user_info is not None:
-                user_defined_values = {
-                    "models": getattr(user_info, "models", []),
-                    "user_id": getattr(user_info, "user_id", user_id),
-                    "user_email": getattr(user_info, "user_id", user_email),
+            # update the general settings
+            if config_info.general_settings is not None:
+                config.setdefault("general_settings", {})
+                updated_general_settings = config_info.general_settings.dict(
+                    exclude_none=True
+                )
+                config["general_settings"] = {
+                    **updated_general_settings,
+                    **config["general_settings"],
                 }
-                user_role = getattr(user_info, "user_role", None)
-            elif litellm.default_user_params is not None and isinstance(
-                litellm.default_user_params, dict
-            ):
-                user_defined_values = {
-                    "models": litellm.default_user_params.get("models", user_id_models),
-                    "user_id": litellm.default_user_params.get("user_id", user_id),
-                    "user_email": litellm.default_user_params.get(
-                        "user_email", user_email
-                    ),
+
+            if config_info.environment_variables is not None:
+                config.setdefault("environment_variables", {})
+                updated_environment_variables = config_info.environment_variables
+                config["environment_variables"] = {
+                    **updated_environment_variables,
+                    **config["environment_variables"],
                 }
-    except Exception as e:
-        pass
 
-    verbose_proxy_logger.info(
-        f"user_defined_values for creating ui key: {user_defined_values}"
-    )
-    response = await generate_key_helper_fn(
-        **default_ui_key_values, **user_defined_values  # type: ignore
-    )
-    key = response["token"]  # type: ignore
-    user_id = response["user_id"]  # type: ignore
-    litellm_dashboard_ui = "/ui/"
-    user_role = user_role or "app_owner"
-    if (
-        os.getenv("PROXY_ADMIN_ID", None) is not None
-        and os.environ["PROXY_ADMIN_ID"] == user_id
-    ):
-        # checks if user is admin
-        user_role = "app_admin"
+            # update the litellm settings
+            if config_info.litellm_settings is not None:
+                config.setdefault("litellm_settings", {})
+                updated_litellm_settings = config_info.litellm_settings
+                config["litellm_settings"] = {
+                    **updated_litellm_settings,
+                    **config["litellm_settings"],
+                }
 
-    verbose_proxy_logger.debug(
-        f"user_role: {user_role}; ui_access_mode: {ui_access_mode}"
-    )
-    ## CHECK IF ROLE ALLOWED TO USE PROXY ##
-    if ui_access_mode == "admin_only" and "admin" not in user_role:
-        verbose_proxy_logger.debug("EXCEPTION RAISED")
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "error": f"User not allowed to access proxy. User role={user_role}, proxy mode={ui_access_mode}"
-            },
-        )
+            # Save the updated config
+            await proxy_config.save_config(new_config=config)
 
-    import jwt
-
-    jwt_token = jwt.encode(
-        {
-            "user_id": user_id,
-            "key": key,
-            "user_email": user_email,
-            "user_role": user_role,
-            "login_method": "sso",
-        },
-        "secret",
-        algorithm="HS256",
-    )
-    litellm_dashboard_ui += "?userID=" + user_id + "&token=" + jwt_token
-    # if a user has logged in they should be allowed to create keys - this ensures that it's set to True
-    general_settings["allow_user_auth"] = True
-    return RedirectResponse(url=litellm_dashboard_ui)
-
-
-#### BASIC ENDPOINTS ####
-@router.post(
-    "/config/update",
-    tags=["config.yaml"],
-    dependencies=[Depends(user_api_key_auth)],
-)
-async def update_config(config_info: ConfigYAML):
-    """
-    For Admin UI - allows admin to update config via UI
-
-    Currently supports modifying General Settings + LiteLLM settings
-    """
-    global llm_router, llm_model_list, general_settings, proxy_config, proxy_logging_obj
-    try:
-        # Load existing config
-        config = await proxy_config.get_config()
-
-        backup_config = copy.deepcopy(config)
-        verbose_proxy_logger.debug(f"Loaded config: {config}")
-
-        # update the general settings
-        if config_info.general_settings is not None:
-            config.setdefault("general_settings", {})
-            updated_general_settings = config_info.general_settings.dict(
-                exclude_none=True
-            )
-            config["general_settings"] = {
-                **updated_general_settings,
-                **config["general_settings"],
-            }
-
-        if config_info.environment_variables is not None:
-            config.setdefault("environment_variables", {})
-            updated_environment_variables = config_info.environment_variables
-            config["environment_variables"] = {
-                **updated_environment_variables,
-                **config["environment_variables"],
-            }
-
-        # update the litellm settings
-        if config_info.litellm_settings is not None:
-            config.setdefault("litellm_settings", {})
-            updated_litellm_settings = config_info.litellm_settings
-            config["litellm_settings"] = {
-                **updated_litellm_settings,
-                **config["litellm_settings"],
-            }
-
-        # Save the updated config
-        await proxy_config.save_config(new_config=config)
-
-        # Test new connections
-        ## Slack
-        if "slack" in config.get("general_settings", {}).get("alerting", []):
-            await proxy_logging_obj.alerting_handler(
-                message="This is a test", level="Low"
-            )
-        return {"message": "Config updated successfully"}
-    except Exception as e:
-        traceback.print_exc()
-        if isinstance(e, HTTPException):
+            # Test new connections
+            ## Slack
+            if "slack" in config.get("general_settings", {}).get("alerting", []):
+                await proxy_logging_obj.alerting_handler(
+                    message="This is a test", level="Low"
+                )
+            return {"message": "Config updated successfully"}
+        except Exception as e:
+            traceback.print_exc()
+            if isinstance(e, HTTPException):
+                raise ProxyException(
+                    message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                    type="auth_error",
+                    param=getattr(e, "param", "None"),
+                    code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                )
+            elif isinstance(e, ProxyException):
+                raise e
             raise ProxyException(
-                message=getattr(e, "detail", f"Authentication Error({str(e)})"),
+                message="Authentication Error, " + str(e),
                 type="auth_error",
                 param=getattr(e, "param", "None"),
-                code=getattr(e, "status_code", status.HTTP_400_BAD_REQUEST),
+                code=status.HTTP_400_BAD_REQUEST,
             )
-        elif isinstance(e, ProxyException):
-            raise e
-        raise ProxyException(
-            message="Authentication Error, " + str(e),
-            type="auth_error",
-            param=getattr(e, "param", "None"),
-            code=status.HTTP_400_BAD_REQUEST,
-        )
 
 
 @router.get(
@@ -6961,7 +6972,7 @@ async def health_liveliness():
 
 @router.get("/", dependencies=[Depends(user_api_key_auth)])
 async def home(request: Request):
-    return "LiteLLM: RUNNING"
+    return "Status: RUNNING"
 
 
 @router.get("/routes", dependencies=[Depends(user_api_key_auth)])
