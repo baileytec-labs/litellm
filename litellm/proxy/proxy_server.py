@@ -11,12 +11,12 @@ import warnings
 import backoff
 programmed_title_message=os.environ.get("TITLEMESSAGE")
 enable_ui_panel = os.environ.get("UIPANEL")
-if enable_ui_panel is None:
+if not len(enable_ui_panel)>0:
     enable_ui_panel = True
 else:
     enable_ui_panel = False
 enable_extra_admin = os.environ.get("EXTRAADMIN")
-if enable_extra_admin is None:
+if not len(enable_extra_admin)>0:
     enable_extra_admin = True
 else:
     enable_extra_admin = False
